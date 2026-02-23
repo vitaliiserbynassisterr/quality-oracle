@@ -18,7 +18,10 @@ async def connect_db():
     await _db.quality__evaluations.create_index("target_id")
     await _db.quality__evaluations.create_index("status")
     await _db.quality__scores.create_index("target_id", unique=True)
+    await _db.quality__score_history.create_index("target_id")
+    await _db.quality__score_history.create_index("recorded_at")
     await _db.quality__attestations.create_index("evaluation_id")
+    await _db.quality__question_banks.create_index("domain")
     logger.info(f"Connected to MongoDB: {settings.mongodb_database}")
 
 
@@ -42,6 +45,10 @@ def evaluations_col():
 
 def scores_col():
     return get_db().quality__scores
+
+
+def score_history_col():
+    return get_db().quality__score_history
 
 
 def attestations_col():

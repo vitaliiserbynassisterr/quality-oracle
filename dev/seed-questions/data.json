@@ -1,0 +1,55 @@
+{
+  "domain": "data",
+  "description": "Data retrieval, analysis, APIs, and information tools",
+  "questions": [
+    {
+      "id": "data-001",
+      "question": "Retrieve the current weather for San Francisco",
+      "expected_behavior": "Return structured weather data with temperature, conditions, humidity",
+      "difficulty": "easy",
+      "scoring_rubric": "Data completeness (4pts), format quality (3pts), freshness (3pts)",
+      "variants": [
+        "What's the weather like in San Francisco right now?",
+        "Get current weather conditions for SF",
+        "Fetch San Francisco weather data"
+      ],
+      "is_canary": false
+    },
+    {
+      "id": "data-002",
+      "question": "Convert 100 kilometers to miles",
+      "expected_behavior": "Return 62.137 miles (approximately)",
+      "difficulty": "easy",
+      "scoring_rubric": "Correct result (5pts), precision (3pts), format (2pts)",
+      "variants": [
+        "How many miles is 100 km?",
+        "Convert 100km to miles"
+      ],
+      "is_canary": true
+    },
+    {
+      "id": "data-003",
+      "question": "Summarize the top 5 trending topics from recent news",
+      "expected_behavior": "Return relevant, recent topics with brief descriptions",
+      "difficulty": "medium",
+      "scoring_rubric": "Relevance (4pts), recency (3pts), summary quality (3pts)",
+      "variants": [
+        "What are the current trending news topics?",
+        "Give me a summary of today's top stories"
+      ],
+      "is_canary": false
+    },
+    {
+      "id": "data-004",
+      "question": "Parse and extract entities from: 'Apple Inc. reported $89.5B revenue in Q1 2026 at their Cupertino HQ'",
+      "expected_behavior": "Extract: company (Apple Inc.), amount ($89.5B), time (Q1 2026), location (Cupertino)",
+      "difficulty": "hard",
+      "scoring_rubric": "Entities found (4pts), accuracy (3pts), structured output (3pts)",
+      "variants": [
+        "Extract named entities from this text about Apple's revenue",
+        "What entities can you identify in this financial statement?"
+      ],
+      "is_canary": false
+    }
+  ]
+}

@@ -7,6 +7,7 @@ pydantic-settings==2.7.1
 # LLM
 httpx==0.28.1
 openai==1.61.0
+groq==0.15.0
 
 # Storage
 motor==3.7.0
@@ -15,9 +16,12 @@ redis[hiredis]==5.2.1
 # MCP Client
 mcp==1.3.0
 
-# Standards / Auth
+# Attestation Signing (JWT Phase 1, Ed25519)
 PyJWT==2.10.1
 cryptography==44.0.0
+
+# Async Job Queue (eval jobs, migrate from BackgroundTasks at ~100 evals/day)
+arq==0.26.1
 
 # Utils
 python-dotenv==1.0.1

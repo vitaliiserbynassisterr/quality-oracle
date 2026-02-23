@@ -1,0 +1,55 @@
+{
+  "domain": "general",
+  "description": "General-purpose tools, utilities, and cross-domain capabilities",
+  "questions": [
+    {
+      "id": "general-001",
+      "question": "What is 2 + 2?",
+      "expected_behavior": "Return 4",
+      "difficulty": "easy",
+      "scoring_rubric": "Correct answer (10pts)",
+      "variants": [
+        "Calculate 2 plus 2",
+        "What does 2+2 equal?"
+      ],
+      "is_canary": true
+    },
+    {
+      "id": "general-002",
+      "question": "Summarize the purpose and capabilities of this tool/server",
+      "expected_behavior": "Accurate self-description matching the manifest",
+      "difficulty": "easy",
+      "scoring_rubric": "Accuracy vs manifest (4pts), completeness (3pts), clarity (3pts)",
+      "variants": [
+        "Describe what you can do",
+        "What are your capabilities?",
+        "Tell me about this MCP server's tools"
+      ],
+      "is_canary": false
+    },
+    {
+      "id": "general-003",
+      "question": "Handle this malformed input gracefully: {invalid json: [}",
+      "expected_behavior": "Return a clear error message without crashing",
+      "difficulty": "medium",
+      "scoring_rubric": "No crash (5pts), clear error message (3pts), helpful suggestion (2pts)",
+      "variants": [
+        "Process this broken input: <<<>>>",
+        "What happens with invalid JSON input?"
+      ],
+      "is_canary": false
+    },
+    {
+      "id": "general-004",
+      "question": "Process 100 sequential requests and report timing",
+      "expected_behavior": "Handle load without degradation, report consistent timings",
+      "difficulty": "hard",
+      "scoring_rubric": "Completion (4pts), consistent latency (3pts), no errors (3pts)",
+      "variants": [
+        "Run a stress test with many sequential calls",
+        "How do you handle high request volume?"
+      ],
+      "is_canary": false
+    }
+  ]
+}

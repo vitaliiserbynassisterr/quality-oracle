@@ -1,0 +1,55 @@
+{
+  "domain": "search",
+  "description": "Search, retrieval, and information discovery tools",
+  "questions": [
+    {
+      "id": "search-001",
+      "question": "Search for documentation about Python asyncio",
+      "expected_behavior": "Return relevant documentation links/snippets about asyncio",
+      "difficulty": "easy",
+      "scoring_rubric": "Relevance (4pts), completeness (3pts), source quality (3pts)",
+      "variants": [
+        "Find Python asyncio documentation",
+        "Look up asyncio guides and references",
+        "Search for async programming in Python docs"
+      ],
+      "is_canary": false
+    },
+    {
+      "id": "search-002",
+      "question": "Find the most recent MCP protocol specification",
+      "expected_behavior": "Return link to or content from the MCP specification",
+      "difficulty": "medium",
+      "scoring_rubric": "Accuracy (4pts), recency (3pts), specificity (3pts)",
+      "variants": [
+        "Where can I find the MCP protocol spec?",
+        "Search for Anthropic's Model Context Protocol specification"
+      ],
+      "is_canary": false
+    },
+    {
+      "id": "search-003",
+      "question": "Search for 'hello world' in an empty database",
+      "expected_behavior": "Return empty results gracefully, not an error",
+      "difficulty": "easy",
+      "scoring_rubric": "Graceful empty result (5pts), proper format (3pts), no crash (2pts)",
+      "variants": [
+        "Look up a nonexistent term",
+        "Search for something that doesn't exist"
+      ],
+      "is_canary": true
+    },
+    {
+      "id": "search-004",
+      "question": "Perform a semantic search for 'best practices for securing API endpoints' and rank results by relevance",
+      "expected_behavior": "Return ranked results covering auth, rate limiting, input validation, HTTPS",
+      "difficulty": "hard",
+      "scoring_rubric": "Relevance ranking (4pts), coverage breadth (3pts), actionable content (3pts)",
+      "variants": [
+        "Find and rank API security best practices",
+        "Search for how to secure REST APIs, ordered by relevance"
+      ],
+      "is_canary": false
+    }
+  ]
+}

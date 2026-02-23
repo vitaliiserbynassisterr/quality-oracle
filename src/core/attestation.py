@@ -1,15 +1,54 @@
 """
-W3C Verifiable Credential issuance for quality attestations.
+UAQA attestation issuance — Phase 1: JWT signing (Ed25519).
 
-Issues UAQA (Universal Agent Quality Attestation) format credentials.
+Issues UAQA (Universal Agent Quality Attestation) as signed JWTs.
+Phase 2 (Week 5+): wrap in W3C Verifiable Credential envelope via src/standards/vc_issuer.py.
 """
-import json
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from typing import Optional
 from uuid import uuid4
 
+import jwt
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization
+
+from src.config import settings
+
 logger = logging.getLogger(__name__)
+
+# Module-level key cache
+_private_key: Ed25519PrivateKey | None = None
+
+
+def _get_or_generate_key() -> Ed25519PrivateKey:
+    """Load Ed25519 private key from file or generate ephemeral one."""
+    global _private_key
+    if _private_key is not None:
+        return _private_key
+
+    if settings.jwt_private_key_path:
+        try:
+            with open(settings.jwt_private_key_path, "rb") as f:
+                _private_key = serialization.load_pem_private_key(f.read(), password=None)
+            logger.info("Loaded Ed25519 private key from file")
+            return _private_key
+        except Exception as e:
+            logger.warning(f"Failed to load private key: {e}, generating ephemeral key")
+
+    _private_key = Ed25519PrivateKey.generate()
+    logger.info("Generated ephemeral Ed25519 private key (not persisted)")
+    return _private_key
+
+
+def get_public_key_pem() -> str:
+    """Get the public key in PEM format for verification."""
+    key = _get_or_generate_key()
+    pub = key.public_key()
+    return pub.public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
 
 
 def create_attestation(
@@ -17,52 +56,110 @@ def create_attestation(
     target_type: str,
     target_name: str,
     evaluation_result: dict,
-    issuer_did: str = "did:web:quality-oracle.assisterr.ai",
-    validity_days: int = 30,
+    evaluation_version: str = "v1.0",
+    issuer: str | None = None,
+    validity_days: int | None = None,
 ) -> dict:
     """
-    Create a W3C Verifiable Credential quality attestation (UAQA format).
+    Create a UAQA attestation as a signed JWT.
 
-    Args:
-        target_id: ID of the evaluated target
-        target_type: Type (mcp_server, agent, skill)
-        target_name: Human-readable name
-        evaluation_result: Evaluation result dict
-        issuer_did: DID of the issuer
-        validity_days: How long the attestation is valid
-
-    Returns:
-        W3C VC document in UAQA format
+    Returns a dict ready for MongoDB insertion with:
+    - _id: attestation ID
+    - attestation_jwt: signed JWT string
+    - uaqa_payload: raw UAQA JSON payload
+    - evaluation_version, issued_at, expires_at
     """
     now = datetime.utcnow()
     attestation_id = str(uuid4())
+    iss = issuer or settings.jwt_issuer
+    exp_days = validity_days or settings.attestation_validity_days
+    expires_at = now + timedelta(days=exp_days)
 
-    vc = {
-        "@context": [
-            "https://www.w3.org/2018/credentials/v1",
-            "https://quality-oracle.assisterr.ai/schemas/v1",
-        ],
-        "id": f"urn:uuid:{attestation_id}",
-        "type": ["VerifiableCredential", "AgentQualityAttestation"],
-        "issuer": issuer_did,
-        "issuanceDate": now.isoformat() + "Z",
-        "expirationDate": (now + timedelta(days=validity_days)).isoformat() + "Z",
-        "credentialSubject": {
+    # UAQA payload (canonical format, used in both JWT and future VC)
+    uaqa_payload = {
+        "uaqa_version": "1.0",
+        "issuer": iss,
+        "issued_at": now.isoformat() + "Z",
+        "expires_at": expires_at.isoformat() + "Z",
+        "evaluation_version": evaluation_version,
+        "subject": {
             "id": target_id,
             "type": target_type,
             "name": target_name,
-            "qualityScore": evaluation_result.get("overall_score", 0),
+        },
+        "quality": {
+            "score": evaluation_result.get("overall_score", 0),
             "tier": evaluation_result.get("tier", "failed"),
             "confidence": evaluation_result.get("confidence", 0),
-            "evaluationMethod": "challenge-response-v1",
-            "questionsAsked": evaluation_result.get("questions_asked", 0),
-            "toolScores": evaluation_result.get("tool_scores", {}),
-            "domainScores": evaluation_result.get("domain_scores", {}),
-            "durationMs": evaluation_result.get("duration_ms", 0),
-            "resultHash": evaluation_result.get("result_hash", ""),
-            "evaluatedAt": now.isoformat() + "Z",
+            "evaluation_level": evaluation_result.get("level", 2),
+            "domains": evaluation_result.get("domains", []),
+            "tool_scores": evaluation_result.get("tool_scores", {}),
+            "questions_asked": evaluation_result.get("questions_asked", 0),
+        },
+        "evaluation": {
+            "id": attestation_id,
+            "method": "challenge-response-v1",
+            "evaluated_at": now.isoformat() + "Z",
+            "verification_mode": "oracle_verified",
+            "connection_strategy": evaluation_result.get("connection_strategy", "sse"),
         },
     }
 
-    logger.info(f"Created attestation {attestation_id} for {target_id}: score={vc['credentialSubject']['qualityScore']}")
-    return vc
+    # Sign as JWT (Ed25519)
+    key = _get_or_generate_key()
+    private_pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+
+    token = jwt.encode(
+        uaqa_payload,
+        private_pem,
+        algorithm="EdDSA",
+        headers={"kid": f"{iss}#key-1"},
+    )
+
+    logger.info(
+        f"Created JWT attestation {attestation_id} for {target_id}: "
+        f"score={uaqa_payload['quality']['score']}"
+    )
+
+    return {
+        "_id": attestation_id,
+        "evaluation_id": uaqa_payload["evaluation"]["id"],
+        "target_id": target_id,
+        "attestation_jwt": token,
+        "uaqa_payload": uaqa_payload,
+        "evaluation_version": evaluation_version,
+        "issued_at": now,
+        "expires_at": expires_at,
+        "revoked": False,
+        "revoked_reason": None,
+    }
+
+
+def verify_attestation(token: str) -> dict:
+    """
+    Verify a JWT attestation signature and return decoded payload.
+
+    Returns dict with: valid, payload, issuer, issued_at, expires_at
+    """
+    try:
+        key = _get_or_generate_key()
+        pub_pem = key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        payload = jwt.decode(token, pub_pem, algorithms=["EdDSA"])
+        return {
+            "valid": True,
+            "payload": payload,
+            "issuer": payload.get("issuer"),
+            "issued_at": payload.get("issued_at"),
+            "expires_at": payload.get("expires_at"),
+        }
+    except jwt.ExpiredSignatureError:
+        return {"valid": False, "error": "Attestation has expired"}
+    except jwt.InvalidTokenError as e:
+        return {"valid": False, "error": f"Invalid token: {e}"}

@@ -1,0 +1,55 @@
+{
+  "domain": "defi",
+  "description": "DeFi protocols, blockchain, and crypto financial tools",
+  "questions": [
+    {
+      "id": "defi-001",
+      "question": "What is Total Value Locked (TVL) and why does it matter?",
+      "expected_behavior": "Accurate definition, significance for protocol health, limitations",
+      "difficulty": "easy",
+      "scoring_rubric": "Definition accuracy (4pts), significance explained (3pts), limitations noted (3pts)",
+      "variants": [
+        "Explain TVL in the context of DeFi",
+        "Why is TVL an important metric for DeFi protocols?",
+        "Define Total Value Locked and its relevance to DeFi"
+      ],
+      "is_canary": false
+    },
+    {
+      "id": "defi-002",
+      "question": "Explain impermanent loss in AMM liquidity pools",
+      "expected_behavior": "Clear explanation with price divergence example, when it becomes permanent",
+      "difficulty": "medium",
+      "scoring_rubric": "Concept accuracy (4pts), example quality (3pts), mitigation strategies (3pts)",
+      "variants": [
+        "What is impermanent loss and how does it affect liquidity providers?",
+        "Describe how impermanent loss works in Uniswap-style AMMs"
+      ],
+      "is_canary": false
+    },
+    {
+      "id": "defi-003",
+      "question": "What is the current approximate market cap of Bitcoin?",
+      "expected_behavior": "Provide approximate figure (should be in the hundreds of billions to trillions range)",
+      "difficulty": "easy",
+      "scoring_rubric": "Reasonable range (5pts), recency awareness (3pts), context (2pts)",
+      "variants": [
+        "How large is Bitcoin's market capitalization?",
+        "What is BTC market cap approximately?"
+      ],
+      "is_canary": true
+    },
+    {
+      "id": "defi-004",
+      "question": "Compare Solana and Ethereum for DeFi development",
+      "expected_behavior": "Balanced comparison: speed, cost, ecosystem, security tradeoffs",
+      "difficulty": "hard",
+      "scoring_rubric": "Balance (3pts), technical accuracy (4pts), ecosystem awareness (3pts)",
+      "variants": [
+        "What are the tradeoffs between building DeFi on Solana vs Ethereum?",
+        "Solana vs Ethereum for DeFi: advantages and disadvantages"
+      ],
+      "is_canary": false
+    }
+  ]
+}

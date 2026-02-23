@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     # API Keys
     api_key_salt: str = "change-this-to-random-string"
 
+    # JWT Attestation Signing (Ed25519)
+    jwt_private_key_path: str = ""
+    jwt_issuer: str = "did:web:quality-oracle.assisterr.ai"
+    attestation_validity_days: int = 30
+
     # CORS
     cors_origins: List[str] = ["http://localhost:3000"]
 
@@ -39,11 +44,19 @@ class Settings(BaseSettings):
     default_eval_level: int = 2
     max_concurrent_evals: int = 5
     eval_timeout_seconds: int = 120
+    evaluation_version: str = "v1.0"
 
-    # Rate limiting
-    rate_limit_free: str = "10/month"
-    rate_limit_developer: str = "100/month"
-    rate_limit_team: str = "500/month"
+    # Rate limiting (evaluations per month)
+    rate_limit_free: int = 10
+    rate_limit_developer: int = 100
+    rate_limit_team: int = 500
+
+    # Webhook
+    webhook_timeout_seconds: int = 10
+    webhook_max_retries: int = 3
+
+    # Base URL for constructing links in responses
+    base_url: str = "http://localhost:8002"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

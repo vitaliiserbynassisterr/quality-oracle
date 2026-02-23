@@ -1,0 +1,56 @@
+{
+  "domain": "code",
+  "description": "Code generation, analysis, and development tools",
+  "questions": [
+    {
+      "id": "code-001",
+      "question": "Generate a Python function that checks if a string is a palindrome",
+      "expected_behavior": "Return a working function with correct logic, handles edge cases",
+      "difficulty": "easy",
+      "scoring_rubric": "Correct logic (4pts), edge cases handled (3pts), clean code (3pts)",
+      "variants": [
+        "Write a palindrome checker function in Python",
+        "Create a function to determine if a given string reads the same forwards and backwards",
+        "Implement is_palindrome(s: str) -> bool in Python"
+      ],
+      "is_canary": false
+    },
+    {
+      "id": "code-002",
+      "question": "Explain the difference between async/await and threading in Python",
+      "expected_behavior": "Accurate explanation of concurrency models, GIL mention, use cases",
+      "difficulty": "medium",
+      "scoring_rubric": "Accuracy (4pts), completeness (3pts), practical examples (3pts)",
+      "variants": [
+        "Compare asyncio and threading approaches in Python",
+        "When should I use async/await vs threads in Python?",
+        "What are the tradeoffs between threading and asyncio in Python?"
+      ],
+      "is_canary": false
+    },
+    {
+      "id": "code-003",
+      "question": "Find the bug in this code: def factorial(n): return n * factorial(n-1)",
+      "expected_behavior": "Identify missing base case, suggest fix with n <= 1 check",
+      "difficulty": "easy",
+      "scoring_rubric": "Bug identified (5pts), correct fix (3pts), explanation (2pts)",
+      "variants": [
+        "What's wrong with this recursive factorial function?",
+        "Debug: def factorial(n): return n * factorial(n-1)"
+      ],
+      "is_canary": true
+    },
+    {
+      "id": "code-004",
+      "question": "Implement a rate limiter using the token bucket algorithm",
+      "expected_behavior": "Working implementation with configurable rate and burst, thread-safe",
+      "difficulty": "hard",
+      "scoring_rubric": "Correct algorithm (4pts), configurability (3pts), thread safety (3pts)",
+      "variants": [
+        "Build a token bucket rate limiter class",
+        "Create a rate limiting mechanism using the token bucket pattern"
+      ],
+      "is_canary": false
+    }
+  ]
+}

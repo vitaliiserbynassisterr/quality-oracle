@@ -24,5 +24,14 @@ services:
     ports:
       - "6379:6379"
 
+  # Dev-only: mock MCP server with predictable tool responses for testing
+  mock-mcp-server:
+    build: dev/mock-mcp-server
+    ports:
+      - "8010:8010"
+    profiles:
+      - dev
+    restart: unless-stopped
+
 volumes:
   mongodb_data:
