@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-quality-oracle"
+version = "0.1.0"
+description = "Quality Oracle MCP Server — verify AI agent and MCP server quality from your IDE"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Assisterr", email = "team@assisterr.ai"},
+]
+dependencies = [
+    "mcp>=1.3.0",
+    "httpx>=0.28.0",
+]
+
+[project.scripts]
+mcp-quality-oracle = "server:main"
