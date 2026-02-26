@@ -38,12 +38,16 @@ EVALUATION_VERSION = settings.evaluation_version
 
 def _get_judge() -> LLMJudge:
     return LLMJudge(
-        api_key=settings.deepseek_api_key or None,
-        model=settings.deepseek_model,
-        provider="deepseek",
-        base_url=settings.deepseek_base_url,
-        fallback_key=settings.groq_api_key or None,
-        fallback_model=settings.groq_model,
+        api_key=settings.openai_api_key or None,
+        model=settings.openai_model,
+        provider="openai",
+        base_url=settings.openai_base_url,
+        fallback_key=settings.deepseek_api_key or None,
+        fallback_model=settings.deepseek_model,
+        fallback_provider="deepseek",
+        fallback2_key=settings.groq_api_key or None,
+        fallback2_model=settings.groq_model,
+        fallback2_provider="groq",
     )
 
 

@@ -75,3 +75,60 @@ def test_fuzzy_judge_empty():
     judge = LLMJudge()
     result = judge._judge_fuzzy("What is TVL?", "Total Value Locked", "")
     assert result.score == 0
+
+
+def test_fuzzy_judge_json_happy_path():
+    """JSON calculate response should score high when answer is correct."""
+    judge = LLMJudge()
+    result = judge._judge_fuzzy(
+        "calculate with expression='2 + 3 * 4'",
+        "Should return the computed result=14 for expression='2 + 3 * 4'",
+        '{"result": 14, "expression": "2 + 3 * 4"}',
+    )
+    assert result.score >= 70, f"Expected >=70, got {result.score}: {result.explanation}"
+    assert result.method == "fuzzy"
+
+
+def test_fuzzy_judge_json_weather():
+    """JSON weather response should score high with city and temperature."""
+    judge = LLMJudge()
+    result = judge._judge_fuzzy(
+        "get_weather with city='London'",
+        "Should return weather data with city='London' and temperature",
+        '{"city": "London", "temperature_c": 33, "condition": "sunny", "humidity": 45}',
+    )
+    assert result.score >= 70, f"Expected >=70, got {result.score}: {result.explanation}"
+    assert result.method == "fuzzy"
+
+
+def test_fuzzy_judge_json_error_expected():
+    """JSON error response when error was expected should score reasonably."""
+    judge = LLMJudge()
+    result = judge._judge_fuzzy(
+        "calculate with missing parameters",
+        "Should handle error gracefully when required fields are missing",
+        '{"error": "validation_error", "detail": "Field required: expression"}',
+    )
+    assert result.score >= 50, f"Expected >=50, got {result.score}: {result.explanation}"
+
+
+def test_fuzzy_judge_json_error_unexpected():
+    """JSON error response when success was expected should score low."""
+    judge = LLMJudge()
+    result = judge._judge_fuzzy(
+        "calculate with expression='1 + 1'",
+        "Should return the computed result=2 for expression='1 + 1'",
+        '{"error": "internal_server_error", "detail": "Something went wrong"}',
+    )
+    assert result.score < 30, f"Expected <30, got {result.score}: {result.explanation}"
+
+
+def test_fuzzy_judge_error_string():
+    """Raw error text when error behavior was expected should score ok."""
+    judge = LLMJudge()
+    result = judge._judge_fuzzy(
+        "calculate with missing expression",
+        "Should fail gracefully with validation error for missing required field",
+        "Error executing tool calculate: Field required",
+    )
+    assert result.score >= 55, f"Expected >=55, got {result.score}: {result.explanation}"

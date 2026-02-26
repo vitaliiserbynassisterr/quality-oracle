@@ -194,6 +194,80 @@ async def get_server_manifest(server_url: str) -> dict:
         raise ConnectionError(f"Cannot connect to MCP server at {server_url}: {e}") from e
 
 
+async def check_response_consistency(
+    server_url: str,
+    tools: List[dict],
+    sample_size: int = 2,
+) -> Dict[str, float]:
+    """Check idempotency: call same tool with same inputs twice, compare.
+
+    Returns dict of tool_name -> consistency_ratio (0.0-1.0).
+    A ratio of 1.0 means identical responses both times.
+
+    Args:
+        server_url: MCP server URL
+        tools: List of tool definitions (from manifest)
+        sample_size: Number of tools to test (default: 2, to keep it fast)
+    """
+    from src.core.test_generator import _generate_sample_input
+
+    consistency: Dict[str, float] = {}
+
+    # Pick up to sample_size tools that have input schemas
+    candidates = [t for t in tools if t.get("inputSchema", {}).get("properties")]
+    test_tools = candidates[:sample_size] if candidates else tools[:sample_size]
+
+    if not test_tools:
+        return consistency
+
+    try:
+        async with _connect(server_url) as (transport_used, session):
+            await session.initialize()
+
+            for tool in test_tools:
+                name = tool["name"]
+                schema = tool.get("inputSchema", {})
+                input_data = _generate_sample_input(schema, variation=0)
+
+                # Call twice with same inputs
+                start1 = time.time()
+                resp1 = await _call_tool_in_session(session, name, input_data, start1)
+                start2 = time.time()
+                resp2 = await _call_tool_in_session(session, name, input_data, start2)
+
+                # Compare content (ignore latency differences)
+                c1 = resp1.get("content", "").strip()
+                c2 = resp2.get("content", "").strip()
+
+                if c1 == c2:
+                    consistency[name] = 1.0
+                elif not c1 or not c2:
+                    consistency[name] = 0.0
+                else:
+                    # Partial match — compute character-level similarity
+                    shorter = min(len(c1), len(c2))
+                    longer = max(len(c1), len(c2))
+                    if longer == 0:
+                        consistency[name] = 1.0
+                    else:
+                        # Simple ratio: common prefix length / max length
+                        common = 0
+                        for a, b in zip(c1, c2):
+                            if a == b:
+                                common += 1
+                            else:
+                                break
+                        # Use a more robust metric: matching chars / total
+                        match_chars = sum(1 for a, b in zip(c1, c2) if a == b)
+                        consistency[name] = round(match_chars / longer, 2)
+
+                logger.debug(f"Consistency {name}: {consistency[name]}")
+    except Exception as e:
+        logger.warning(f"Consistency check failed for {server_url}: {e}")
+
+    return consistency
+
+
 async def evaluate_server_streaming(
     server_url: str,
     cancel: Optional["CancellationToken"] = None,

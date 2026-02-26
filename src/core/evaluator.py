@@ -62,9 +62,10 @@ class EvaluationResult:
         self.duration_ms: int = 0
         self.result_hash: str = ""
 
-        # Multi-dimensional scoring (5 axes)
+        # Multi-dimensional scoring (6 axes)
         self.dimensions: Optional[Dict[str, dict]] = None
         self.safety_report: Optional[dict] = None
+        self.process_quality_report: Optional[dict] = None
         self.latency_stats: Optional[Dict[str, int]] = None
 
     def to_dict(self) -> dict:
@@ -84,6 +85,8 @@ class EvaluationResult:
             d["dimensions"] = self.dimensions
         if self.safety_report:
             d["safety"] = self.safety_report
+        if self.process_quality_report:
+            d["process_quality"] = self.process_quality_report
         if self.latency_stats:
             d["latency"] = self.latency_stats
         return d
@@ -467,13 +470,14 @@ class Evaluator:
         run_safety: bool = True,
     ) -> EvaluationResult:
         """
-        Full multi-dimensional evaluation (5 axes).
+        Full multi-dimensional evaluation (6 axes).
 
-        Runs functional eval + safety probes, computes per-dimension scores:
-        - accuracy (40%): correctness of tool responses
+        Runs functional eval + safety probes + process quality, computes per-dimension scores:
+        - accuracy (35%): correctness of tool responses
         - safety (20%): adversarial probe resistance
+        - process_quality (10%): error handling, input validation, response structure
         - reliability (15%): score consistency / variance penalty
-        - latency (15%): response time performance
+        - latency (10%): response time performance
         - schema_quality (10%): manifest completeness
 
         Args:
@@ -504,6 +508,16 @@ class Evaluator:
                 result.safety_report = safety_report.to_dict()
             except Exception as e:
                 logger.warning(f"Safety probes failed: {e}")
+
+        # Process quality dimension — error handling, validation, structure
+        process_quality_score = 50  # Neutral default
+        try:
+            from src.core.process_quality import analyze_process_quality
+            pq_result = analyze_process_quality(tool_responses)
+            process_quality_score = pq_result.score
+            result.process_quality_report = pq_result.to_dict()
+        except Exception as e:
+            logger.warning(f"Process quality analysis failed: {e}")
 
         # Latency dimension — from tool response latencies
         all_latencies = []
@@ -554,12 +568,13 @@ class Evaluator:
         else:
             reliability_score = 50  # Not enough data
 
-        # Multi-dimensional aggregate (weighted)
+        # Multi-dimensional aggregate (6 axes, weighted)
         dimensions = {
-            "accuracy": {"score": accuracy_score, "weight": 0.40},
+            "accuracy": {"score": accuracy_score, "weight": 0.35},
             "safety": {"score": safety_score, "weight": 0.20},
+            "process_quality": {"score": process_quality_score, "weight": 0.10},
             "reliability": {"score": reliability_score, "weight": 0.15},
-            "latency": {"score": latency_score, "weight": 0.15},
+            "latency": {"score": latency_score, "weight": 0.10},
             "schema_quality": {"score": schema_score, "weight": 0.10},
         }
         result.dimensions = dimensions
@@ -578,7 +593,8 @@ class Evaluator:
             f"Full evaluation: {target_id} | "
             f"Overall: {result.overall_score} | Tier: {result.tier} | "
             f"Dims: acc={accuracy_score} safe={safety_score} "
-            f"rel={reliability_score} lat={latency_score} schema={schema_score}"
+            f"proc={process_quality_score} rel={reliability_score} "
+            f"lat={latency_score} schema={schema_score}"
         )
 
         return result

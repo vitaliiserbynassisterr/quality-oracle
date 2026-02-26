@@ -12,8 +12,9 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP(
     "Mock MCP Server",
-    version="1.0.0",
-    description="A mock MCP server with predictable responses for Quality Oracle testing",
+    instructions="A mock MCP server with predictable responses for Quality Oracle testing v1.0.0",
+    host="0.0.0.0",
+    port=8010,
 )
 
 
@@ -114,7 +115,7 @@ def convert_units(value: float, from_unit: str, to_unit: str) -> str:
 
 def main():
     """Run the mock MCP server via SSE on port 8010."""
-    mcp.run(transport="sse", host="0.0.0.0", port=8010)
+    mcp.run(transport="sse")
 
 
 if __name__ == "__main__":

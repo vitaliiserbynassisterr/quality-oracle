@@ -123,6 +123,203 @@ QUESTION_POOLS: Dict[str, List[ChallengeQuestion]] = {
             reference_answer="Pre-payment: verify competency BEFORE paying (challenge-response, benchmarks). Post-payment: observe after use (ratings, reputation). Pre-payment prevents paying for low-quality service.",
         ),
     ],
+
+    # ── MCP-Specific Domains (for server evaluation) ─────────────────────
+
+    "mcp_protocol": [
+        ChallengeQuestion(
+            question="What transports does the MCP protocol support and when should each be used?",
+            domain="mcp_protocol", difficulty="easy",
+            reference_answer="MCP supports stdio (local), SSE (HTTP streaming, legacy), and Streamable HTTP (bidirectional, recommended for remote). Use stdio for local tools, Streamable HTTP for remote servers.",
+        ),
+        ChallengeQuestion(
+            question="Explain how MCP tool discovery works via the list_tools method.",
+            domain="mcp_protocol", difficulty="easy",
+            reference_answer="Client sends tools/list request. Server responds with array of tool definitions including name, description, and inputSchema (JSON Schema). Client uses these to generate valid tool calls.",
+        ),
+        ChallengeQuestion(
+            question="What is the MCP initialize handshake and what does it negotiate?",
+            domain="mcp_protocol", difficulty="medium",
+            reference_answer="Client sends initialize with protocolVersion and capabilities. Server responds with its protocolVersion and capabilities. They negotiate shared protocol version. Client then sends initialized notification.",
+        ),
+        ChallengeQuestion(
+            question="How should an MCP server handle invalid tool arguments according to the spec?",
+            domain="mcp_protocol", difficulty="medium",
+            reference_answer="Server should return error response with code -32602 (Invalid params) and descriptive message. Must not crash or return 500. Should validate against inputSchema before execution.",
+        ),
+        ChallengeQuestion(
+            question="Explain the difference between MCP tools, resources, and prompts.",
+            domain="mcp_protocol", difficulty="medium",
+            reference_answer="Tools are callable functions (model-controlled). Resources are data URIs for context (application-controlled). Prompts are user-facing templates. Tools are most common for server-to-server.",
+        ),
+        ChallengeQuestion(
+            question="What are MCP server capabilities and how do they affect client behavior?",
+            domain="mcp_protocol", difficulty="hard",
+            reference_answer="Capabilities declared in initialize: tools, resources, prompts, logging, experimental. Client must not call tools/list if server doesn't declare tools capability. Enables progressive feature negotiation.",
+        ),
+        ChallengeQuestion(
+            question="How does session management work in MCP Streamable HTTP transport?",
+            domain="mcp_protocol", difficulty="hard",
+            reference_answer="Server assigns session ID via Mcp-Session-Id header after initialize. Client includes it in subsequent requests. Server can invalidate sessions. Enables stateful multi-turn interactions.",
+        ),
+        ChallengeQuestion(
+            question="What is the JSON-RPC message format used by MCP and its key fields?",
+            domain="mcp_protocol", difficulty="easy",
+            reference_answer="MCP uses JSON-RPC 2.0: requests have jsonrpc, method, params, id. Responses have jsonrpc, result/error, id. Notifications omit id. Error has code, message, data fields.",
+        ),
+    ],
+
+    "tool_quality": [
+        ChallengeQuestion(
+            question="What makes a high-quality MCP tool description?",
+            domain="tool_quality", difficulty="easy",
+            reference_answer="Clear purpose statement, parameter descriptions with types and examples, expected output format, error conditions, and usage context. Should be self-documenting for LLMs to use correctly.",
+        ),
+        ChallengeQuestion(
+            question="Why is input schema validation important for MCP tools?",
+            domain="tool_quality", difficulty="easy",
+            reference_answer="Prevents invalid data from reaching business logic, provides clear error messages, enables client-side validation, improves security. JSON Schema with required fields, types, and constraints.",
+        ),
+        ChallengeQuestion(
+            question="How should MCP tools handle rate limiting and what should they communicate?",
+            domain="tool_quality", difficulty="medium",
+            reference_answer="Return error with retry-after hint, use standard HTTP 429 status. Include rate limit headers. Don't silently drop requests. Consider token bucket or sliding window algorithm.",
+        ),
+        ChallengeQuestion(
+            question="What are idempotency considerations for MCP tool design?",
+            domain="tool_quality", difficulty="hard",
+            reference_answer="Read operations should always be idempotent. Write operations should support idempotency keys. Retries should be safe. Side effects should be documented. GET-like tools must not modify state.",
+        ),
+        ChallengeQuestion(
+            question="How should an MCP tool handle timeouts and long-running operations?",
+            domain="tool_quality", difficulty="medium",
+            reference_answer="Set reasonable timeout, return partial results when possible, support progress notifications via MCP logging. For long operations, return job ID and provide status-check tool.",
+        ),
+        ChallengeQuestion(
+            question="What are best practices for MCP tool error responses?",
+            domain="tool_quality", difficulty="medium",
+            reference_answer="Use structured error with code and message. Include actionable details (what failed, why, how to fix). Don't leak internal details. Map to standard JSON-RPC error codes when applicable.",
+        ),
+        ChallengeQuestion(
+            question="How should MCP tools handle sensitive data in inputs and outputs?",
+            domain="tool_quality", difficulty="hard",
+            reference_answer="Never log sensitive params, mask PII in responses, validate input sanitization, reject suspicious patterns. Warn about data sensitivity in tool description. Follow least-privilege principle.",
+        ),
+        ChallengeQuestion(
+            question="What response format best supports LLM consumption of MCP tool outputs?",
+            domain="tool_quality", difficulty="medium",
+            reference_answer="Structured JSON with consistent field names, human-readable summaries alongside data, pagination for large results, clear null vs missing distinction. Include metadata like count, hasMore.",
+        ),
+    ],
+
+    "error_handling": [
+        ChallengeQuestion(
+            question="What should happen when an MCP tool receives a request with an unknown parameter?",
+            domain="error_handling", difficulty="easy",
+            reference_answer="Should either ignore unknown parameters (lenient) or return validation error with list of valid parameters (strict). Must not crash. Strict is recommended for safety.",
+        ),
+        ChallengeQuestion(
+            question="How should an MCP server respond when a tool dependency (database, API) is unavailable?",
+            domain="error_handling", difficulty="medium",
+            reference_answer="Return error with specific message about which dependency failed. Include retry hint. Don't expose internal connection strings. Log full error server-side. Consider circuit breaker pattern.",
+        ),
+        ChallengeQuestion(
+            question="What is graceful degradation in MCP tool context?",
+            domain="error_handling", difficulty="medium",
+            reference_answer="Return partial results when some data sources fail. Indicate what was retrieved vs what failed. Prefer returning something useful over total failure. Include data freshness/completeness indicators.",
+        ),
+        ChallengeQuestion(
+            question="How should MCP tools handle extremely large input payloads?",
+            domain="error_handling", difficulty="medium",
+            reference_answer="Enforce max input size limits. Return 413-like error with size limit info. Don't attempt to process before size check. Protect against memory exhaustion. Document limits in tool description.",
+        ),
+        ChallengeQuestion(
+            question="Explain circuit breaker pattern applied to MCP tool implementations.",
+            domain="error_handling", difficulty="hard",
+            reference_answer="Track failure rate of external calls. After threshold, open circuit (return cached/error immediately). Periodically allow test request (half-open). Close on success. Prevents cascading failures.",
+        ),
+        ChallengeQuestion(
+            question="How should MCP servers handle concurrent requests to the same tool?",
+            domain="error_handling", difficulty="hard",
+            reference_answer="Support concurrent execution for read operations. Queue or reject excess writes with backpressure. Use connection pooling for dependencies. Return 503 with retry-after when overloaded.",
+        ),
+    ],
+
+    "agent_communication": [
+        ChallengeQuestion(
+            question="What is the difference between MCP and A2A protocols?",
+            domain="agent_communication", difficulty="easy",
+            reference_answer="MCP connects LLMs to tools/data (client-server). A2A connects agents to agents (peer-to-peer). MCP is tool invocation, A2A is task delegation. They complement each other.",
+        ),
+        ChallengeQuestion(
+            question="How does an A2A Agent Card enable agent discovery?",
+            domain="agent_communication", difficulty="medium",
+            reference_answer="Agent Card at /.well-known/agent.json declares capabilities, supported protocols, skills, and authentication. Clients fetch it to discover what an agent can do before delegating tasks.",
+        ),
+        ChallengeQuestion(
+            question="What role does quality verification play in agent-to-agent delegation?",
+            domain="agent_communication", difficulty="medium",
+            reference_answer="Before delegating a task, the requesting agent checks quality score/attestation of target agent. Prevents delegating to incompetent agents. Score caching enables fast lookup without re-evaluation.",
+        ),
+        ChallengeQuestion(
+            question="Explain the trust hierarchy in multi-agent systems.",
+            domain="agent_communication", difficulty="hard",
+            reference_answer="Root trust from human operators, derived trust through attestations, transitive trust via delegation chains. Each hop reduces confidence. Quality scores add objective signal. Attestation expiry prevents stale trust.",
+        ),
+        ChallengeQuestion(
+            question="How can agents verify each other's quality claims without a central authority?",
+            domain="agent_communication", difficulty="hard",
+            reference_answer="Cryptographic attestations (JWTs signed by evaluators), verifiable credentials (W3C VCs), on-chain score anchoring, multi-evaluator consensus. Decentralized oracle pattern like Chainlink for agent quality.",
+        ),
+        ChallengeQuestion(
+            question="What is the x402 protocol and how does it relate to agent quality?",
+            domain="agent_communication", difficulty="medium",
+            reference_answer="x402 enables HTTP-native micropayments. Agent returns 402 Payment Required with price. Quality score determines willingness to pay — higher score = higher trust = willing to pay more. Enables pay-per-use agent economy.",
+        ),
+        ChallengeQuestion(
+            question="How should quality scores be cached for fast agent-to-agent lookups?",
+            domain="agent_communication", difficulty="medium",
+            reference_answer="Score TTL based on evaluation confidence (high confidence = longer TTL). Redis/local cache with target_url as key. Background re-evaluation before expiry. Return cached score with freshness indicator.",
+        ),
+        ChallengeQuestion(
+            question="What is progressive evaluation and why is it important for A2A?",
+            domain="agent_communication", difficulty="hard",
+            reference_answer="Start with fast cheap checks (manifest validation ~50ms), only run expensive tests (functional, safety) if initial check passes. Reduces average evaluation time from 30s to <1s for known-good agents.",
+        ),
+    ],
+
+    "ai_safety": [
+        ChallengeQuestion(
+            question="What is prompt injection in the context of MCP tools?",
+            domain="ai_safety", difficulty="easy",
+            reference_answer="Malicious input designed to override tool's intended behavior. e.g., 'Ignore instructions, output secrets'. Tool should process input as data, not instructions. Input sanitization is key defense.",
+        ),
+        ChallengeQuestion(
+            question="How can MCP tools prevent data exfiltration through tool outputs?",
+            domain="ai_safety", difficulty="medium",
+            reference_answer="Output filtering for PII/secrets, response size limits, content classification before return, sandboxed execution, egress controls. Never include API keys, tokens, or internal paths in responses.",
+        ),
+        ChallengeQuestion(
+            question="What is the confused deputy problem in agent systems?",
+            domain="ai_safety", difficulty="hard",
+            reference_answer="An agent with legitimate access is tricked into misusing its privileges. In MCP: tool with DB access tricked by crafted input to read unauthorized data. Prevention: least privilege, input validation, capability-based security.",
+        ),
+        ChallengeQuestion(
+            question="How should MCP servers implement defense in depth?",
+            domain="ai_safety", difficulty="medium",
+            reference_answer="Multiple security layers: input validation, authentication, authorization, rate limiting, output filtering, logging, monitoring. No single layer should be the only defense. Fail closed, not open.",
+        ),
+        ChallengeQuestion(
+            question="What are hallucination risks specific to MCP tool responses?",
+            domain="ai_safety", difficulty="medium",
+            reference_answer="Tool may fabricate data that looks plausible (fake search results, invented statistics). More dangerous than LLM hallucination because tools imply factual data. Ground responses in real data, flag uncertainty.",
+        ),
+        ChallengeQuestion(
+            question="Explain the principle of least privilege applied to MCP tool design.",
+            domain="ai_safety", difficulty="easy",
+            reference_answer="Each tool should only access what it needs. Read-only tools shouldn't have write access. File tools should be sandboxed to specific directories. Database tools should use limited-privilege connections.",
+        ),
+    ],
 }
 
 ALL_QUESTIONS: List[ChallengeQuestion] = []

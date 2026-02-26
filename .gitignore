@@ -38,6 +38,9 @@ htmlcov/
 /data/
 *.db
 
+# Scan reports (generated)
+reports/
+
 # Docker
 .docker/
 

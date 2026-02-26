@@ -26,8 +26,38 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
     groq_model: str = "llama-3.3-70b-versatile"
 
+    # LLM Judge - Primary (OpenAI)
+    openai_api_key: str = ""
+    openai_model: str = "gpt-4o-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
+
+    # LLM Judge - Cerebras (free: 1M TPD, Qwen3 235B)
+    cerebras_api_key: str = ""
+    cerebras_model: str = "gpt-oss-120b"
+    cerebras_base_url: str = "https://api.cerebras.ai/v1"
+
+    # LLM Judge - Gemini (free: 250 RPD via OpenAI-compat)
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+    # LLM Judge - OpenRouter (free: DeepSeek R1, 200 RPD)
+    openrouter_api_key: str = ""
+    openrouter_model: str = "qwen/qwen3-next-80b-a3b-instruct:free"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+
+    # LLM Judge - Mistral (free: 2 RPM, all models)
+    mistral_api_key: str = ""
+    mistral_model: str = "mistral-large-latest"
+    mistral_base_url: str = "https://api.mistral.ai/v1"
+
     # LLM Judge - Question Generation
     anthropic_api_key: str = ""
+
+    # Consensus Judge
+    consensus_enabled: bool = True
+    consensus_min_judges: int = 2
+    consensus_agreement_threshold: int = 15  # points within which judges "agree"
 
     # API Keys
     api_key_salt: str = "change-this-to-random-string"

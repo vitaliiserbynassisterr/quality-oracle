@@ -8,7 +8,7 @@
 - **Stack:** FastAPI + Motor (MongoDB) + Redis
 - **MongoDB prefix:** `quality__` (collections: evaluations, scores, score_history, attestations, question_banks, api_keys)
 - **Redis prefix:** `qo:` (score cache, badge cache, attestation verify cache, rate limits)
-- **LLM Judge:** DeepSeek V3.2 primary, Groq Llama 3.3-70B fallback, fuzzy string matching fallback
+- **LLM Judge:** Multi-provider (Cerebras, Groq, Gemini, DeepSeek, OpenAI, OpenRouter, Mistral) with ConsensusJudge (2-judge parallel + tiebreaker)
 - **Domain agent:** `32-implement-py` handles this repo
 
 ## Architecture
@@ -18,7 +18,9 @@
 - **Level 2 (Functional):** MCP SSE connection → list tools → generate test cases → call tools → LLM judge responses
 - **Level 3 (Domain Expert):** Calibrated question bank with weighted scoring
 
-JWT attestation via Ed25519 (UAQA format). MCP SDK SSE client for server connections. Webhook-first async delivery for Level 2+.
+6-axis scoring: accuracy(35%), safety(20%), process_quality(10%), reliability(15%), latency(10%), schema_quality(10%).
+
+JWT attestation via Ed25519 (UAQA format). MCP SDK SSE + Streamable HTTP dual transport. A2A v0.3 compliant Agent Card. Webhook-first async delivery for Level 2+.
 
 ## Quality Gates
 

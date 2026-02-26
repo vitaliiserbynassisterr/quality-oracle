@@ -2,16 +2,17 @@
 LLM-as-Judge for Quality Oracle evaluation scoring.
 
 Ported from agent-poi hackathon (poi/llm_judge.py).
-Adapted for Quality Oracle: DeepSeek V3.2 primary, Groq fallback, fuzzy fallback.
+Adapted for Quality Oracle: OpenAI primary, DeepSeek fallback, Groq fallback2, fuzzy fallback.
 """
 import asyncio
 import hashlib
 import json
 import logging
+import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from difflib import SequenceMatcher
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import httpx
 
@@ -20,6 +21,251 @@ logger = logging.getLogger(__name__)
 CACHE_TTL = 86400  # 24 hours
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 2.0
+
+# Per-provider rate limits (requests per minute)
+_PROVIDER_RPM = {
+    "groq": 20,       # Free tier: 30 RPM, conservative headroom
+    "openai": 40,     # Tier 1: ~60 RPM for gpt-4o-mini
+    "deepseek": 40,
+    "cerebras": 20,
+    "gemini": 15,     # Free tier is lower
+    "openrouter": 40,
+    "mistral": 40,
+}
+
+
+class _ProviderRateLimiter:
+    """Global per-provider rate limiter for LLM API calls."""
+
+    _instances: Dict[str, "_ProviderRateLimiter"] = {}
+
+    def __init__(self, provider: str, rpm: int):
+        self.provider = provider
+        self.min_gap = 60.0 / rpm  # seconds between calls
+        self._lock = asyncio.Lock()
+        self._last_call = 0.0
+
+    @classmethod
+    def for_provider(cls, provider: str) -> "_ProviderRateLimiter":
+        if provider not in cls._instances:
+            rpm = _PROVIDER_RPM.get(provider, 30)
+            cls._instances[provider] = cls(provider, rpm)
+        return cls._instances[provider]
+
+    async def wait(self):
+        async with self._lock:
+            now = time.time()
+            wait_time = self._last_call + self.min_gap - now
+            if wait_time > 0:
+                await asyncio.sleep(wait_time)
+            self._last_call = time.time()
+
+    async def backoff(self, seconds: float = 60.0):
+        """Force a longer wait after sustained rate limiting."""
+        async with self._lock:
+            logger.info(f"Rate limit backoff: waiting {seconds:.0f}s for {self.provider}")
+            self._last_call = time.time() + seconds - self.min_gap
+            await asyncio.sleep(seconds)
+
+# Stop words that carry no signal when comparing expected descriptions to JSON
+_STOP_WORDS = frozenset({
+    "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "shall", "can", "need", "must",
+    "of", "in", "to", "for", "with", "on", "at", "from", "by", "as",
+    "into", "through", "during", "before", "after", "above", "below",
+    "and", "but", "or", "nor", "not", "so", "yet", "both", "either",
+    "that", "this", "these", "those", "it", "its", "if", "then",
+    "than", "when", "where", "how", "what", "which", "who", "whom",
+    "all", "each", "every", "any", "some", "no", "other",
+})
+
+# Verbs from expected-behavior descriptions that never appear in JSON responses
+_BEHAVIOR_VERBS = frozenset({
+    "return", "returns", "returned", "compute", "computes", "computed",
+    "calculate", "calculates", "calculated", "handle", "handles", "handled",
+    "provide", "provides", "provided", "contain", "contains", "contained",
+    "include", "includes", "included", "show", "shows", "displayed",
+    "gracefully", "correctly", "properly", "appropriately", "successfully",
+    "validate", "validates", "validated", "convert", "converts", "converted",
+    "fetch", "fetches", "fetched", "retrieve", "retrieves", "retrieved",
+    "respond", "responds", "indicate", "indicates",
+})
+
+# Regex for extracting key='value' or key="value" patterns from expected text
+_KV_PATTERN = re.compile(r"(\w+)\s*=\s*['\"]([^'\"]+)['\"]")
+
+# Error indicator substrings
+_ERROR_INDICATORS = ("error", "exception", "traceback", "validation error", "field required")
+
+
+def _classify_answer(answer: str) -> str:
+    """Classify an answer as 'json', 'error', or 'text'."""
+    stripped = answer.strip()
+    # Try JSON first
+    if stripped.startswith(("{", "[")):
+        try:
+            json.loads(stripped)
+            return "json"
+        except (json.JSONDecodeError, ValueError):
+            pass
+    # Check for error indicators
+    lower = stripped.lower()
+    for indicator in _ERROR_INDICATORS:
+        if indicator in lower:
+            return "error"
+    return "text"
+
+
+def _extract_json_values(data, prefix: str = "") -> Dict[str, str]:
+    """Recursively flatten JSON into {path: str(value)} pairs."""
+    result = {}
+    if isinstance(data, dict):
+        for k, v in data.items():
+            path = f"{prefix}.{k}" if prefix else k
+            if isinstance(v, (dict, list)):
+                result.update(_extract_json_values(v, path))
+            else:
+                result[path] = str(v)
+    elif isinstance(data, list):
+        for i, item in enumerate(data):
+            path = f"{prefix}[{i}]"
+            if isinstance(item, (dict, list)):
+                result.update(_extract_json_values(item, path))
+            else:
+                result[path] = str(item)
+    return result
+
+
+def _normalize_numeric(value: str) -> str:
+    """Normalize numeric strings: '15.0' → '15', '3.00' → '3'."""
+    try:
+        num = float(value)
+        if num == int(num):
+            return str(int(num))
+        return f"{num:.6g}"
+    except (ValueError, TypeError):
+        return value.strip().lower()
+
+
+def _filter_content_terms(text: str) -> List[str]:
+    """Extract meaningful content terms from text, filtering stop words."""
+    # Extract key=value patterns and add their components
+    kv_terms = []
+    for match in _KV_PATTERN.finditer(text):
+        kv_terms.append(match.group(1).lower())
+        kv_terms.append(match.group(2).lower())
+
+    # Remove kv patterns from text before splitting
+    cleaned = _KV_PATTERN.sub("", text)
+    # Split and filter
+    words = re.split(r"[\s,.:;!?()]+", cleaned.lower())
+    terms = [
+        w.strip("'\"") for w in words
+        if len(w) > 2
+        and w.strip("'\"") not in _STOP_WORDS
+        and w.strip("'\"") not in _BEHAVIOR_VERBS
+    ]
+    return kv_terms + terms
+
+
+def _score_json_response(expected: str, answer: str) -> Optional[Tuple[int, str]]:
+    """Score a JSON response against expected behavior text.
+
+    Returns (score, explanation) or None if JSON parsing fails.
+    """
+    try:
+        data = json.loads(answer.strip())
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+    flat = _extract_json_values(data)
+    json_values = [v.lower() for v in flat.values()]
+    json_keys = [k.lower().split(".")[-1] for k in flat.keys()]
+    expected_lower = expected.lower()
+
+    # --- Signal 1: Parameter echo (35%) ---
+    # Check if key='value' pairs from expected text appear in JSON values
+    kv_matches = _KV_PATTERN.findall(expected_lower)
+    if kv_matches:
+        echo_hits = 0
+        for _key, value in kv_matches:
+            val_lower = _normalize_numeric(value)
+            if any(_normalize_numeric(jv) == val_lower or val_lower in jv for jv in json_values):
+                echo_hits += 1
+        echo_score = echo_hits / len(kv_matches)
+    else:
+        # No explicit kv pairs - check if any expected content terms appear in values
+        content_terms = _filter_content_terms(expected)
+        if content_terms:
+            hits = sum(1 for t in content_terms if any(t in jv for jv in json_values))
+            echo_score = min(1.0, hits / max(len(content_terms), 1))
+        else:
+            echo_score = 0.5  # Neutral if no terms to check
+
+    # --- Signal 2: Key coverage (30%) ---
+    # Extract data-carrying nouns from expected, check against JSON keys
+    content_terms = _filter_content_terms(expected)
+    if content_terms:
+        key_hits = 0
+        for term in content_terms:
+            # Substring match: "temperature" matches "temperature_c"
+            if any(term in jk or jk in term for jk in json_keys):
+                key_hits += 1
+        key_score = min(1.0, key_hits / max(len(content_terms), 1))
+    else:
+        key_score = 0.5
+
+    # --- Signal 3: Structural validity (35%) ---
+    has_error_key = any("error" in k for k in json_keys) or any("error" in v for v in json_values)
+    error_expected = any(
+        kw in expected_lower
+        for kw in ("error", "fail", "invalid", "missing", "gracefully", "reject")
+    )
+
+    if has_error_key and error_expected:
+        struct_score = 0.85
+    elif has_error_key and not error_expected:
+        struct_score = 0.15  # Unexpected error
+    elif len(flat) >= 4:
+        struct_score = 1.0  # Rich response
+    elif len(flat) >= 2:
+        struct_score = 0.8
+    else:
+        struct_score = 0.6
+
+    raw = echo_score * 0.35 + key_score * 0.30 + struct_score * 0.35
+    score = max(0, min(100, int(round(raw * 100))))
+
+    return score, (
+        f"JSON: echo={echo_score:.0%}, keys={key_score:.0%}, struct={struct_score:.0%}"
+    )
+
+
+def _score_error_response(expected: str, answer: str) -> Tuple[int, str]:
+    """Score an error response against expected behavior."""
+    expected_lower = expected.lower()
+    answer_lower = answer.lower()
+
+    error_expected = any(
+        kw in expected_lower
+        for kw in ("error", "fail", "invalid", "missing", "gracefully", "reject", "exception")
+    )
+
+    if error_expected:
+        # Error was expected - base score + detail bonus
+        base = 60
+        detail_bonus = 0
+        detail_keywords = ["required", "missing", "invalid", "validation", "type", "field", "parameter"]
+        for kw in detail_keywords:
+            if kw in answer_lower:
+                detail_bonus += 4
+        detail_bonus = min(25, detail_bonus)
+        score = min(100, base + detail_bonus)
+        return score, f"Error expected+received, detail_bonus={detail_bonus}"
+    else:
+        # Unexpected error
+        return 15, "Unexpected error in response"
 
 
 @dataclass
@@ -42,19 +288,33 @@ class LLMJudge:
     """
     LLM-as-Judge for evaluating MCP server / agent responses.
 
-    Provider priority: DeepSeek V3.2 → Groq → Fuzzy fallback.
+    Provider priority: OpenAI gpt-4o-mini → DeepSeek → Groq → Fuzzy fallback.
     Results are cached to avoid duplicate API calls.
     """
+
+    # Provider → base URL mapping (all OpenAI-compatible)
+    _PROVIDER_URLS = {
+        "openai": "https://api.openai.com/v1",
+        "deepseek": "https://api.deepseek.com/v1",
+        "groq": "https://api.groq.com/openai/v1",
+        "cerebras": "https://api.cerebras.ai/v1",
+        "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "openrouter": "https://openrouter.ai/api/v1",
+        "mistral": "https://api.mistral.ai/v1",
+    }
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "deepseek-chat",
-        provider: str = "deepseek",
-        base_url: str = "https://api.deepseek.com/v1",
+        model: str = "gpt-4o-mini",
+        provider: str = "openai",
+        base_url: str = "https://api.openai.com/v1",
         fallback_key: Optional[str] = None,
-        fallback_model: str = "llama-3.3-70b-versatile",
-        fallback_provider: str = "groq",
+        fallback_model: str = "deepseek-chat",
+        fallback_provider: str = "deepseek",
+        fallback2_key: Optional[str] = None,
+        fallback2_model: str = "llama-3.3-70b-versatile",
+        fallback2_provider: str = "groq",
     ):
         self.api_key = api_key
         self.model = model
@@ -63,6 +323,9 @@ class LLMJudge:
         self.fallback_key = fallback_key
         self.fallback_model = fallback_model
         self.fallback_provider = fallback_provider
+        self.fallback2_key = fallback2_key
+        self.fallback2_model = fallback2_model
+        self.fallback2_provider = fallback2_provider
         self._cache: Dict[str, CacheEntry] = {}
         self._llm_available = bool(api_key)
 
@@ -70,6 +333,10 @@ class LLMJudge:
             logger.info(f"LLM Judge: provider={provider}, model={model}")
         else:
             logger.info("LLM Judge: using fuzzy fallback (no API key)")
+
+    def _provider_base_url(self, provider: str) -> str:
+        """Get default base URL for a provider."""
+        return self._PROVIDER_URLS.get(provider, "https://api.openai.com/v1")
 
     @property
     def is_llm_available(self) -> bool:
@@ -101,10 +368,15 @@ class LLMJudge:
 
     def _build_prompt(self, question: str, expected: str, answer: str) -> str:
         return (
-            "You are a judge evaluating an AI agent/tool response quality. "
-            "Score the response from 0 to 100 based on CORRECTNESS, COMPLETENESS, and RELEVANCE. "
-            "A correct but concise answer should score 70-85. "
-            "Only deduct heavily for factual errors, missing critical information, or irrelevant responses.\n\n"
+            "You are a strict judge evaluating an MCP tool response.\n\n"
+            "Scoring rubric:\n"
+            "  90-100: Correct result with all expected fields/values present\n"
+            "  70-89:  Correct result but minor missing fields or formatting differences\n"
+            "  50-69:  Partially correct — some expected data present, some missing or wrong\n"
+            "  25-49:  Poor — response exists but mostly wrong or irrelevant\n"
+            "  0-24:   Fail — empty, crash, or completely wrong response\n\n"
+            "If the expected behavior describes an error case and the actual response "
+            "IS an error/validation message, score 80-95 (the tool correctly rejected bad input).\n\n"
             f"Question/Input: {question}\n"
             f"Expected behavior: {expected}\n"
             f"Actual response: {answer}\n\n"
@@ -155,7 +427,19 @@ class LLMJudge:
             result = await self._call_llm(
                 question, expected, answer,
                 self.fallback_key, self.fallback_model, self.fallback_provider,
-                "https://api.groq.com/openai/v1",
+                self._provider_base_url(self.fallback_provider),
+            )
+            if result is not None:
+                result.latency_ms = int((time.time() - start) * 1000)
+                self._store_cache(key, result)
+                return result
+
+        # Try fallback2 provider
+        if self.fallback2_key:
+            result = await self._call_llm(
+                question, expected, answer,
+                self.fallback2_key, self.fallback2_model, self.fallback2_provider,
+                self._provider_base_url(self.fallback2_provider),
             )
             if result is not None:
                 result.latency_ms = int((time.time() - start) * 1000)
@@ -182,26 +466,47 @@ class LLMJudge:
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.1,
-            "max_tokens": 150,
+            "max_tokens": 512 if provider == "cerebras" else 150,
         }
+
+        # Rate limit per provider
+        rate_limiter = _ProviderRateLimiter.for_provider(provider)
 
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 for attempt in range(MAX_RETRIES):
+                    await rate_limiter.wait()
                     response = await client.post(url, headers=headers, json=body)
                     if response.status_code == 429:
+                        # Check if it's a permanent quota error vs temporary rate limit
+                        try:
+                            err_body = response.json()
+                            err_code = err_body.get("error", {}).get("code", "")
+                            if err_code == "insufficient_quota":
+                                logger.warning(f"{provider} quota exhausted, skipping retries")
+                                return None
+                        except Exception:
+                            pass
                         delay = RETRY_BASE_DELAY * (2 ** attempt)
                         logger.warning(f"Judge rate limited (429), retry {attempt + 1}/{MAX_RETRIES}")
                         await asyncio.sleep(delay)
                         continue
                     break
+                else:
+                    # All retries exhausted with 429 — sustained backoff
+                    if response.status_code == 429:
+                        logger.warning(f"{provider} API returned 429 after {MAX_RETRIES} retries")
+                        await rate_limiter.backoff(60.0)
+                        return None
 
                 if response.status_code != 200:
                     logger.warning(f"{provider} API returned {response.status_code}")
                     return None
 
                 data = response.json()
-                text = data["choices"][0]["message"]["content"]
+                message = data["choices"][0]["message"]
+                # Some models (e.g. gpt-oss-120b) return reasoning instead of content
+                text = message.get("content") or message.get("reasoning") or ""
                 parsed = self._parse_response(text)
                 if parsed is None:
                     return None
@@ -214,16 +519,39 @@ class LLMJudge:
             return None
 
     def _judge_fuzzy(self, question: str, expected: str, answer: str) -> JudgeResult:
-        """Enhanced fuzzy matching fallback using difflib."""
+        """Format-aware fuzzy matching fallback.
+
+        Routes to specialized scorers based on answer format:
+        - JSON responses → _score_json_response()
+        - Error strings  → _score_error_response()
+        - Plain text     → _score_text_response()
+        """
         if not answer or not answer.strip():
             return JudgeResult(score=0, explanation="Empty response", method="fuzzy")
 
+        answer_type = _classify_answer(answer)
+
+        if answer_type == "json":
+            result = _score_json_response(expected, answer)
+            if result is not None:
+                score, explanation = result
+                return JudgeResult(score=score, explanation=explanation, method="fuzzy")
+            # JSON parse failed in scorer — fall through to text
+
+        if answer_type == "error":
+            score, explanation = _score_error_response(expected, answer)
+            return JudgeResult(score=score, explanation=explanation, method="fuzzy")
+
+        return self._score_text_response(expected, answer)
+
+    def _score_text_response(self, expected: str, answer: str) -> JudgeResult:
+        """Original fuzzy algorithm with stop-word filtering."""
         answer_lower = answer.lower().strip()
         expected_lower = expected.lower().strip()
 
         seq_ratio = SequenceMatcher(None, expected_lower, answer_lower).ratio()
 
-        expected_terms = [t for t in expected_lower.split() if len(t) > 1]
+        expected_terms = _filter_content_terms(expected)
         if expected_terms:
             answer_terms = answer_lower.split()
             term_scores = []
