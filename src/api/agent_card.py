@@ -1,5 +1,7 @@
-"""A2A Agent Card — Quality Oracle as a discoverable A2A agent."""
+"""A2A Agent Card — Quality Oracle as a discoverable A2A agent (v0.3 spec)."""
 from fastapi import APIRouter
+
+from src.standards.a2a_extension import build_provider_extension_declaration
 
 router = APIRouter()
 
@@ -7,7 +9,7 @@ router = APIRouter()
 @router.get("/.well-known/agent.json")
 async def agent_card():
     """
-    A2A-compliant Agent Card for Quality Oracle.
+    A2A v0.3-compliant Agent Card for Quality Oracle.
 
     Quality Oracle IS an A2A agent that can be discovered and interacted with
     by other agents using the Google A2A protocol.
@@ -26,7 +28,10 @@ async def agent_card():
         "capabilities": {
             "streaming": False,
             "pushNotifications": False,
+            "extensions": [build_provider_extension_declaration()],
         },
+        "defaultInputModes": ["application/json"],
+        "defaultOutputModes": ["application/json"],
         "skills": [
             {
                 "id": "evaluate-quality",
@@ -62,16 +67,34 @@ async def agent_card():
                 ],
             },
         ],
-        "extensions": {
-            "quality_oracle": {
-                "version": "1.0",
-                "evaluation_levels": [
-                    {"level": 1, "name": "Manifest Validation", "cost": "free"},
-                    {"level": 2, "name": "Functional Testing", "cost": "paid"},
-                    {"level": 3, "name": "Domain Expert Testing", "cost": "premium"},
-                ],
-                "supported_targets": ["mcp_server", "agent", "skill"],
-                "attestation_format": "W3C Verifiable Credential (UAQA)",
+    }
+
+
+@router.get("/ext/evaluation/v1")
+async def extension_spec():
+    """Extension specification document for Quality Oracle evaluation.
+
+    Returns the JSON-LD-style schema describing the extension's roles and parameters.
+    """
+    return {
+        "@context": "https://quality-oracle.assisterr.ai/ext/evaluation/v1",
+        "name": "Quality Oracle Evaluation Extension",
+        "version": "1.0",
+        "roles": ["provider", "verified_subject"],
+        "params_schema": {
+            "provider": {
+                "evaluation_levels": "array",
+                "supported_targets": "array",
+                "attestation_format": "string",
+            },
+            "verified_subject": {
+                "score": "integer(0-100)",
+                "tier": "string",
+                "confidence": "float",
+                "last_evaluated": "string (ISO 8601)",
+                "attestation_url": "string",
+                "badge_url": "string",
+                "verify_url": "string",
             },
         },
     }

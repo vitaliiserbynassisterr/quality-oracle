@@ -3,6 +3,7 @@ import logging
 
 from fastapi import APIRouter, Depends
 
+from src.standards.a2a_extension import build_consumer_extension_declaration
 from src.storage.models import EnrichAgentCardRequest, EnrichAgentCardResponse
 from src.storage.mongodb import scores_col
 from src.auth.dependencies import get_api_key
@@ -17,10 +18,11 @@ async def enrich_agent_card(
     api_key_doc: dict = Depends(get_api_key),
 ):
     """
-    Add quality data to an A2A Agent Card.
+    Add quality data to an A2A Agent Card (v0.3 format).
 
     Looks up agent by matching card.url or card.name against evaluated targets.
     If not yet evaluated, returns original card + evaluate_url.
+    Enriches capabilities.extensions[] array per A2A v0.3 spec.
     """
     card = request.agent_card
 
@@ -50,20 +52,13 @@ async def enrich_agent_card(
         "badge_url": score_doc.get("badge_url"),
     }
 
-    # Enrich the card with quality extension
+    # Enrich the card with A2A v0.3 extension format
     enriched = dict(card)
-    extensions = enriched.get("extensions", {})
-    extensions["quality_oracle"] = {
-        "provider": "assisterr.ai",
-        "score": quality_data["score"],
-        "tier": quality_data["tier"],
-        "confidence": quality_data["confidence"],
-        "evaluation_version": quality_data["evaluation_version"],
-        "last_evaluated": quality_data["last_evaluated"],
-        "badge_url": quality_data["badge_url"],
-        "verify_url": f"/v1/score/{score_doc['target_id']}",
-    }
-    enriched["extensions"] = extensions
+    capabilities = enriched.get("capabilities", {})
+    extensions = capabilities.get("extensions", [])
+    extensions.append(build_consumer_extension_declaration(score_doc))
+    capabilities["extensions"] = extensions
+    enriched["capabilities"] = capabilities
 
     return EnrichAgentCardResponse(
         enriched_card=enriched,

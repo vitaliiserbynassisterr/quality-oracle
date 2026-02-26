@@ -8,11 +8,13 @@ Level 3: Domain expert testing (calibrated question bank)
 """
 import hashlib
 import logging
+import statistics
 import time
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import AsyncGenerator, Callable, Dict, List, Optional, Tuple
 
 from src.core.llm_judge import LLMJudge, JudgeResult
+from src.core.paraphraser import QuestionParaphraser
 from src.core.question_pools import (
     QuestionSelector,
     ChallengeQuestion,
@@ -21,6 +23,13 @@ from src.core.question_pools import (
 from src.storage.models import EvalLevel
 
 logger = logging.getLogger(__name__)
+
+# ── Early termination constants ─────────────────────────────────────────────
+
+EARLY_EXIT_MIN_SCORES = 4       # Minimum scores before considering exit
+EARLY_EXIT_HIGH_THRESHOLD = 85  # All scores above this → positive exit
+EARLY_EXIT_LOW_THRESHOLD = 30   # All scores below this → negative exit
+EARLY_EXIT_MIN_LOW = 3          # Minimum low scores before negative exit
 
 
 class ManifestValidationResult:
@@ -53,8 +62,13 @@ class EvaluationResult:
         self.duration_ms: int = 0
         self.result_hash: str = ""
 
+        # Multi-dimensional scoring (5 axes)
+        self.dimensions: Optional[Dict[str, dict]] = None
+        self.safety_report: Optional[dict] = None
+        self.latency_stats: Optional[Dict[str, int]] = None
+
     def to_dict(self) -> dict:
-        return {
+        d = {
             "overall_score": self.overall_score,
             "tier": self.tier,
             "confidence": self.confidence,
@@ -66,6 +80,13 @@ class EvaluationResult:
             "duration_ms": self.duration_ms,
             "result_hash": self.result_hash,
         }
+        if self.dimensions:
+            d["dimensions"] = self.dimensions
+        if self.safety_report:
+            d["safety"] = self.safety_report
+        if self.latency_stats:
+            d["latency"] = self.latency_stats
+        return d
 
 
 class Evaluator:
@@ -73,11 +94,14 @@ class Evaluator:
     Core evaluation engine for Quality Oracle.
 
     Supports 3 levels of evaluation with increasing depth.
+    Accepts LLMJudge or ConsensusJudge (both implement ajudge()).
     """
 
-    def __init__(self, llm_judge: LLMJudge):
+    def __init__(self, llm_judge, paraphrase: bool = True):
+        """Init with any judge that has an ajudge(question, expected, answer) method."""
         self.llm_judge = llm_judge
         self.question_selector = QuestionSelector()
+        self.paraphraser = QuestionParaphraser(llm_judge) if paraphrase else None
 
     def validate_manifest(self, manifest: dict) -> ManifestValidationResult:
         """Level 1: Validate MCP server manifest for completeness and quality."""
@@ -145,17 +169,27 @@ class Evaluator:
         if manifest:
             result.manifest_result = self.validate_manifest(manifest)
 
+        # Anti-gaming: generate per-run paraphrase seed
+        para_seed = self.paraphraser.generate_seed(target_id) if self.paraphraser else 0
+
         # Judge each tool's responses
         all_scores = []
+        case_idx = 0
         for tool_name, responses in tool_responses.items():
             tool_scores = []
             tests_passed = 0
 
             for resp in responses:
+                # Paraphrase question/expected for anti-gaming
+                q = resp["question"]
+                exp = resp["expected"]
+                if self.paraphraser:
+                    q = self.paraphraser.paraphrase_question(q, para_seed + case_idx)
+                    exp = self.paraphraser.paraphrase_expected(exp, para_seed + case_idx)
+                case_idx += 1
+
                 judge_result = await self.llm_judge.ajudge(
-                    resp["question"],
-                    resp["expected"],
-                    resp["answer"],
+                    q, exp, resp["answer"],
                 )
                 tool_scores.append(judge_result.score)
                 if judge_result.score >= 50:
@@ -163,10 +197,11 @@ class Evaluator:
 
                 result.judge_responses.append({
                     "tool": tool_name,
-                    "question": resp["question"],
+                    "question": q,
                     "score": judge_result.score,
                     "explanation": judge_result.explanation,
                     "method": judge_result.method,
+                    "test_type": resp.get("test_type", "unknown"),
                 })
 
             avg_score = sum(tool_scores) / len(tool_scores) if tool_scores else 0
@@ -182,7 +217,14 @@ class Evaluator:
         result.questions_answered = sum(1 for s in all_scores if s > 0)
         result.overall_score = int(sum(all_scores) / len(all_scores)) if all_scores else 0
         result.tier = determine_tier(result.overall_score)
-        result.confidence = min(0.95, len(all_scores) / 30)  # More questions = more confidence
+        # Confidence from sample size (capped at 0.95), with variance penalty
+        sample_conf = min(0.95, len(all_scores) / 30)
+        if len(all_scores) >= 3:
+            stdev = statistics.stdev(all_scores)
+            variance_penalty = max(0.0, (stdev - 25) / 100)
+            result.confidence = round(max(0.1, sample_conf - variance_penalty), 2)
+        else:
+            result.confidence = round(sample_conf, 2)
         result.duration_ms = int((time.time() - start) * 1000)
 
         # Result hash for on-chain
@@ -193,6 +235,144 @@ class Evaluator:
             f"Evaluation complete: {target_id} | "
             f"Score: {result.overall_score} | Tier: {result.tier} | "
             f"Questions: {result.questions_asked}"
+        )
+
+        return result
+
+    @staticmethod
+    def _compute_progressive_confidence(all_scores: List[int]) -> float:
+        """Compute confidence from accumulated scores with variance penalty."""
+        if not all_scores:
+            return 0.0
+        sample_conf = min(0.95, len(all_scores) / 30)
+        if len(all_scores) >= 3:
+            stdev = statistics.stdev(all_scores)
+            variance_penalty = max(0.0, (stdev - 25) / 100)
+            return round(max(0.1, sample_conf - variance_penalty), 2)
+        return round(sample_conf, 2)
+
+    @staticmethod
+    def _check_early_exit(all_scores: List[int]) -> Optional[str]:
+        """Check if scores are decisive enough for early termination.
+
+        Returns reason string if should exit, None otherwise.
+        """
+        if len(all_scores) >= EARLY_EXIT_MIN_SCORES:
+            if all(s >= EARLY_EXIT_HIGH_THRESHOLD for s in all_scores):
+                return f"positive_exit: all {len(all_scores)} scores >= {EARLY_EXIT_HIGH_THRESHOLD}"
+        if len(all_scores) >= EARLY_EXIT_MIN_LOW:
+            if all(s <= EARLY_EXIT_LOW_THRESHOLD for s in all_scores):
+                return f"negative_exit: all {len(all_scores)} scores <= {EARLY_EXIT_LOW_THRESHOLD}"
+        return None
+
+    async def evaluate_functional_streaming(
+        self,
+        target_id: str,
+        response_stream: AsyncGenerator[Tuple[str, dict, dict], None],
+        manifest: Optional[dict] = None,
+        cancel: Optional["CancellationToken"] = None,
+        on_progress: Optional[Callable] = None,
+    ) -> EvaluationResult:
+        """Level 2 streaming: judge each response as it arrives.
+
+        Args:
+            target_id: ID of the target being evaluated
+            response_stream: AsyncGenerator yielding (tool_name, test_case, response)
+            manifest: Optional manifest for Level 1 inclusion
+            cancel: CancellationToken for early termination
+            on_progress: Optional callback(tool_name, case_idx, score, running_avg)
+        """
+        from src.core.cancellation import CancellationToken
+
+        start = time.time()
+        result = EvaluationResult()
+
+        if manifest:
+            result.manifest_result = self.validate_manifest(manifest)
+
+        para_seed = self.paraphraser.generate_seed(target_id) if self.paraphraser else 0
+
+        all_scores: List[int] = []
+        tool_buckets: Dict[str, List[int]] = {}
+        tool_passed: Dict[str, int] = {}
+        tool_total: Dict[str, int] = {}
+        case_idx = 0
+
+        async for tool_name, case, response in response_stream:
+            # Check cancellation
+            if cancel and cancel.is_cancelled:
+                logger.info(f"Streaming eval cancelled at case {case_idx}: {cancel.reason}")
+                break
+
+            # Paraphrase
+            q = case["question"]
+            exp = case["expected"]
+            if self.paraphraser:
+                q = self.paraphraser.paraphrase_question(q, para_seed + case_idx)
+                exp = self.paraphraser.paraphrase_expected(exp, para_seed + case_idx)
+            case_idx += 1
+
+            # Judge immediately
+            judge_result = await self.llm_judge.ajudge(q, exp, response["content"])
+            score = judge_result.score
+            all_scores.append(score)
+
+            # Track per-tool
+            if tool_name not in tool_buckets:
+                tool_buckets[tool_name] = []
+                tool_passed[tool_name] = 0
+                tool_total[tool_name] = 0
+            tool_buckets[tool_name].append(score)
+            tool_total[tool_name] += 1
+            if score >= 50:
+                tool_passed[tool_name] += 1
+
+            result.judge_responses.append({
+                "tool": tool_name,
+                "question": q,
+                "score": score,
+                "explanation": judge_result.explanation,
+                "method": judge_result.method,
+                "test_type": case.get("test_type", "unknown"),
+            })
+
+            # Progress callback
+            running_avg = int(sum(all_scores) / len(all_scores))
+            if on_progress:
+                on_progress(tool_name, case_idx, score, running_avg)
+
+            # Check early exit
+            exit_reason = self._check_early_exit(all_scores)
+            if exit_reason:
+                logger.info(f"Early exit at case {case_idx}: {exit_reason}")
+                if cancel:
+                    cancel.cancel(exit_reason)
+                break
+
+        # Aggregate
+        for tool_name, scores in tool_buckets.items():
+            avg = sum(scores) / len(scores) if scores else 0
+            result.tool_scores[tool_name] = {
+                "score": int(avg),
+                "tests_passed": tool_passed.get(tool_name, 0),
+                "tests_total": tool_total.get(tool_name, 0),
+            }
+
+        result.questions_asked = len(all_scores)
+        result.questions_answered = sum(1 for s in all_scores if s > 0)
+        result.overall_score = int(sum(all_scores) / len(all_scores)) if all_scores else 0
+        result.tier = determine_tier(result.overall_score)
+        result.confidence = self._compute_progressive_confidence(all_scores)
+        result.duration_ms = int((time.time() - start) * 1000)
+
+        hash_data = f"{target_id}:{result.overall_score}:{result.questions_asked}:{int(time.time())}"
+        result.result_hash = hashlib.sha256(hash_data.encode()).hexdigest()
+
+        logger.info(
+            f"Streaming eval complete: {target_id} | "
+            f"Score: {result.overall_score} | Tier: {result.tier} | "
+            f"Questions: {result.questions_asked} | "
+            f"Early exit: {cancel.reason if cancel and cancel.is_cancelled else 'no'}"
         )
 
         return result
@@ -222,16 +402,24 @@ class Evaluator:
 
         all_scores = []
         domain_buckets: Dict[str, List[int]] = {}
+        para_seed = self.paraphraser.generate_seed(target_id) if self.paraphraser else 0
 
-        for q in questions:
+        for qi, q in enumerate(questions):
+            # Paraphrase question for anti-gaming
+            ask_question = q.question
+            if self.paraphraser:
+                ask_question = self.paraphraser.paraphrase_question(
+                    q.question, para_seed + qi
+                )
+
             try:
-                answer = await answer_fn(q.question)
+                answer = await answer_fn(ask_question)
             except Exception as e:
                 logger.warning(f"Failed to get answer for {q.id}: {e}")
                 answer = ""
 
             judge_result = await self.llm_judge.ajudge(
-                q.question, q.reference_answer, answer
+                ask_question, q.reference_answer, answer
             )
 
             weighted_score = int(judge_result.score * q.weight)
@@ -267,5 +455,130 @@ class Evaluator:
 
         hash_data = f"{target_id}:{result.overall_score}:{result.questions_asked}:{int(time.time())}"
         result.result_hash = hashlib.sha256(hash_data.encode()).hexdigest()
+
+        return result
+
+    async def evaluate_full(
+        self,
+        target_id: str,
+        server_url: str,
+        tool_responses: Dict[str, List[dict]],
+        manifest: Optional[dict] = None,
+        run_safety: bool = True,
+    ) -> EvaluationResult:
+        """
+        Full multi-dimensional evaluation (5 axes).
+
+        Runs functional eval + safety probes, computes per-dimension scores:
+        - accuracy (40%): correctness of tool responses
+        - safety (20%): adversarial probe resistance
+        - reliability (15%): score consistency / variance penalty
+        - latency (15%): response time performance
+        - schema_quality (10%): manifest completeness
+
+        Args:
+            target_id: ID of the target being evaluated
+            server_url: MCP server URL for safety probes
+            tool_responses: Dict of tool_name -> list of response dicts
+            manifest: Optional manifest for Level 1
+            run_safety: Whether to run adversarial safety probes
+        """
+        # Run functional evaluation (accuracy dimension)
+        result = await self.evaluate_functional(
+            target_id=target_id,
+            tool_responses=tool_responses,
+            manifest=manifest,
+        )
+
+        accuracy_score = result.overall_score
+        schema_score = result.manifest_result.score if result.manifest_result else 50
+
+        # Safety dimension — adversarial probes
+        safety_score = 50  # Neutral default
+        if run_safety and manifest:
+            try:
+                from src.core.adversarial import run_safety_probes
+                tools = manifest.get("tools", [])
+                safety_report = await run_safety_probes(server_url, tools)
+                safety_score = safety_report.safety_score
+                result.safety_report = safety_report.to_dict()
+            except Exception as e:
+                logger.warning(f"Safety probes failed: {e}")
+
+        # Latency dimension — from tool response latencies
+        all_latencies = []
+        for responses in tool_responses.values():
+            for resp in responses:
+                if not resp.get("is_error") and resp.get("latency_ms"):
+                    all_latencies.append(resp["latency_ms"])
+
+        if all_latencies:
+            sorted_lat = sorted(all_latencies)
+            p50 = sorted_lat[len(sorted_lat) // 2]
+            p95 = sorted_lat[int(len(sorted_lat) * 0.95)]
+            p99 = sorted_lat[int(len(sorted_lat) * 0.99)]
+            result.latency_stats = {"p50_ms": p50, "p95_ms": p95, "p99_ms": p99}
+
+            # Score latency: <200ms=100, 200-500=80, 500-1000=60, 1000-3000=40, >3000=20
+            if p50 < 200:
+                latency_score = 100
+            elif p50 < 500:
+                latency_score = 80
+            elif p50 < 1000:
+                latency_score = 60
+            elif p50 < 3000:
+                latency_score = 40
+            else:
+                latency_score = 20
+        else:
+            latency_score = 50  # Neutral
+
+        # Reliability dimension — variance penalty
+        all_scores = []
+        for jr in result.judge_responses:
+            all_scores.append(jr["score"])
+
+        if len(all_scores) >= 3:
+            stdev = statistics.stdev(all_scores)
+            # Low variance = high reliability
+            if stdev < 10:
+                reliability_score = 100
+            elif stdev < 20:
+                reliability_score = 80
+            elif stdev < 30:
+                reliability_score = 60
+            elif stdev < 40:
+                reliability_score = 40
+            else:
+                reliability_score = 20
+        else:
+            reliability_score = 50  # Not enough data
+
+        # Multi-dimensional aggregate (weighted)
+        dimensions = {
+            "accuracy": {"score": accuracy_score, "weight": 0.40},
+            "safety": {"score": safety_score, "weight": 0.20},
+            "reliability": {"score": reliability_score, "weight": 0.15},
+            "latency": {"score": latency_score, "weight": 0.15},
+            "schema_quality": {"score": schema_score, "weight": 0.10},
+        }
+        result.dimensions = dimensions
+
+        weighted_total = sum(
+            d["score"] * d["weight"] for d in dimensions.values()
+        )
+        result.overall_score = int(round(weighted_total))
+        result.tier = determine_tier(result.overall_score)
+
+        # Recompute result hash with new overall score
+        hash_data = f"{target_id}:{result.overall_score}:{result.questions_asked}:{int(time.time())}"
+        result.result_hash = hashlib.sha256(hash_data.encode()).hexdigest()
+
+        logger.info(
+            f"Full evaluation: {target_id} | "
+            f"Overall: {result.overall_score} | Tier: {result.tier} | "
+            f"Dims: acc={accuracy_score} safe={safety_score} "
+            f"rel={reliability_score} lat={latency_score} schema={schema_score}"
+        )
 
         return result
