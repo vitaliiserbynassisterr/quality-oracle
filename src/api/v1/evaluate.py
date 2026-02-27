@@ -6,7 +6,7 @@ from datetime import datetime
 from uuid import uuid4
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Response
 
 from src.storage.models import (
     EvaluateRequest,
@@ -29,6 +29,7 @@ from src.auth.rate_limiter import (
     add_rate_limit_headers,
 )
 from src.config import settings
+from src.payments.x402 import require_payment
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -57,8 +58,13 @@ async def submit_evaluation(
     background_tasks: BackgroundTasks,
     response: Response,
     api_key_doc: dict = Depends(get_api_key),
+    x_payment: str | None = Header(None, alias="X-Payment"),
 ):
-    """Submit an MCP server or agent for quality evaluation."""
+    """Submit an MCP server or agent for quality evaluation.
+
+    For paid levels (2, 3), include X-Payment header with transaction
+    signature per x402 protocol. Level 1 is always free.
+    """
     tier = api_key_doc.get("tier", "free")
     key_hash = api_key_doc["_id"]
 
@@ -68,6 +74,13 @@ async def submit_evaluation(
             status_code=403,
             detail=f"Evaluation level {request.level.value} not available for '{tier}' tier",
         )
+
+    # x402 payment check (returns None for free levels, receipt for paid)
+    payment_receipt = await require_payment(
+        level=request.level.value,
+        tier=tier,
+        x_payment=x_payment,
+    )
 
     # Check rate limit
     allowed, remaining, limit = await check_eval_rate_limit(key_hash, tier)
@@ -93,6 +106,7 @@ async def submit_evaluation(
         "evaluation_version": EVALUATION_VERSION,
         "webhook_url": request.webhook_url,
         "callback_secret": request.callback_secret,
+        "payment": payment_receipt.to_dict() if payment_receipt else None,
         "created_at": datetime.utcnow(),
     }
     await evaluations_col().insert_one(doc)

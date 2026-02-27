@@ -42,7 +42,7 @@ def test_evaluate_with_auth(test_client, auth_headers):
     with patch("src.api.v1.evaluate._run_evaluation", new_callable=AsyncMock):
         resp = test_client.post(
             "/v1/evaluate",
-            json={"target_url": "http://localhost:8010/sse"},
+            json={"target_url": "http://localhost:8010/sse", "level": 1},
             headers=auth_headers,
         )
     assert resp.status_code == 200

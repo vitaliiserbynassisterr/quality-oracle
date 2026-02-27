@@ -23,6 +23,8 @@ Production correlation: POST /v1/feedback → GET /v1/correlation/{target_id} (a
 
 JWT attestation via Ed25519 (UAQA format). MCP SDK SSE + Streamable HTTP dual transport. A2A v0.3 compliant Agent Card. Webhook-first async delivery for Level 2+.
 
+x402 payment layer: Level 1 free, Level 2 $0.01, Level 3 $0.05 (base). Tier discounts: developer 20%, team 40%, marketplace 60%. Tokens: USDC + SOL on Solana. `X-Payment` header with `tx_sig:token:network` format. `GET /v1/pricing` for pricing table.
+
 ## Quality Gates
 
 ```bash
@@ -45,6 +47,7 @@ src/api/v1/          # FastAPI endpoint routers
 src/core/            # MCP client, evaluator, scoring, attestation
 src/auth/            # API key management, rate limiting
 src/storage/         # MongoDB, Redis, Pydantic models
+src/payments/        # x402 protocol, pricing model
 src/standards/       # W3C VC, UAQA format, A2A extension
 dev/                 # Mock MCP server, seed questions
 tests/               # Pytest tests
