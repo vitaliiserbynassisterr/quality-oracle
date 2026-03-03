@@ -1,7 +1,7 @@
 """
 Production Correlation Engine.
 
-Correlates Quality Oracle pre-evaluation scores with real-world production
+Correlates AgentTrust pre-evaluation scores with real-world production
 outcomes reported via the feedback endpoint. This is the anti-sandbagging
 mechanism — if a server scores high in evals but performs poorly in production,
 the correlation engine detects it.
@@ -157,7 +157,7 @@ def compute_correlation_report(
 
     Args:
         target_id: The target being analyzed
-        eval_score: The Quality Oracle pre-evaluation score (0-100)
+        eval_score: The AgentTrust pre-evaluation score (0-100)
         feedback_items: List of feedback docs with at least:
             - outcome_score (0-100)
             - outcome ("success" | "failure" | "partial")

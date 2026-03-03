@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LLM-powered question generation for Quality Oracle question banks.
+LLM-powered question generation for AgentTrust question banks.
 
 Generates domain-specific challenge questions using OpenAI-compatible APIs.
 Provider priority: Cerebras → Groq → OpenRouter → OpenAI.
@@ -333,7 +333,7 @@ def show_stats():
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate questions for Quality Oracle")
+    parser = argparse.ArgumentParser(description="Generate questions for AgentTrust")
     parser.add_argument("--mode", choices=["generate", "stats"], default="stats")
     parser.add_argument("--domain", type=str, default=None, help="Single domain to generate")
     args = parser.parse_args()

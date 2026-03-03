@@ -1,4 +1,4 @@
-"""Quality Oracle configuration via environment variables."""
+"""AgentTrust configuration via environment variables."""
 from pydantic_settings import BaseSettings
 from typing import List
 
@@ -64,7 +64,7 @@ class Settings(BaseSettings):
 
     # JWT Attestation Signing (Ed25519)
     jwt_private_key_path: str = ""
-    jwt_issuer: str = "did:web:quality-oracle.assisterr.ai"
+    jwt_issuer: str = "did:web:agenttrust.assisterr.ai"
     attestation_validity_days: int = 30
 
     # Payment — Receiver Wallet

@@ -1,6 +1,6 @@
 # Mock MCP Server
 
-A FastMCP server with predictable tool responses for testing the Quality Oracle evaluation engine.
+A FastMCP server with predictable tool responses for testing the AgentTrust evaluation engine.
 
 ## Tools
 
@@ -26,4 +26,4 @@ docker compose --profile dev up mock-mcp-server
 
 ## Why predictable?
 
-All responses are deterministic (no external APIs), so Quality Oracle can validate its own scoring against known-good outputs during development.
+All responses are deterministic (no external APIs), so AgentTrust can validate its own scoring against known-good outputs during development.

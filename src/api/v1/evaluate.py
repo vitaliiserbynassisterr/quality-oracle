@@ -14,10 +14,12 @@ from src.storage.models import (
     EvaluationStatus,
     EvalStatus,
     EvalLevel,
+    EvalMode,
     WebhookPayload,
 )
 from src.storage.mongodb import evaluations_col, scores_col, score_history_col
 from src.core.evaluator import Evaluator
+from src.core.eval_mode import EVAL_MODES
 from src.core.llm_judge import LLMJudge
 from src.core.attestation import create_attestation
 from src.core.scoring import aggregate_scores
@@ -99,16 +101,16 @@ EVALUATION_VERSION = settings.evaluation_version
 
 def _get_judge() -> LLMJudge:
     return LLMJudge(
-        api_key=settings.openai_api_key or None,
-        model=settings.openai_model,
-        provider="openai",
-        base_url=settings.openai_base_url,
-        fallback_key=settings.deepseek_api_key or None,
-        fallback_model=settings.deepseek_model,
-        fallback_provider="deepseek",
-        fallback2_key=settings.groq_api_key or None,
-        fallback2_model=settings.groq_model,
-        fallback2_provider="groq",
+        api_key=settings.cerebras_api_key or None,
+        model=settings.cerebras_model,
+        provider="cerebras",
+        base_url=settings.cerebras_base_url,
+        fallback_key=settings.groq_api_key or None,
+        fallback_model=settings.groq_model,
+        fallback_provider="groq",
+        fallback2_key=settings.openrouter_api_key or None,
+        fallback2_model=settings.openrouter_model,
+        fallback2_provider="openrouter",
     )
 
 
@@ -164,6 +166,7 @@ async def submit_evaluation(
         "domains": request.domains,
         "connection_strategy": "sse",
         "evaluation_version": EVALUATION_VERSION,
+        "eval_mode": request.eval_mode.value,
         "webhook_url": request.webhook_url,
         "callback_secret": request.callback_secret,
         "payment": payment_receipt.to_dict() if payment_receipt else None,
@@ -229,6 +232,13 @@ async def get_evaluation_status(
             if att:
                 attestation_jwt = att.get("attestation_jwt")
 
+    # Compute wall-clock duration from timestamps
+    duration_ms = None
+    created_at = doc.get("created_at")
+    completed_at = doc.get("completed_at")
+    if created_at and completed_at:
+        duration_ms = int((completed_at - created_at).total_seconds() * 1000)
+
     return EvaluationStatus(
         evaluation_id=evaluation_id,
         status=EvalStatus(doc["status"]),
@@ -237,34 +247,63 @@ async def get_evaluation_status(
         tier=tier,
         evaluation_version=doc.get("evaluation_version"),
         report=report,
+        scores=doc.get("scores"),
         attestation_jwt=attestation_jwt,
         badge_url=badge_url,
         result=result,
         error=doc.get("error"),
+        duration_ms=duration_ms,
     )
 
 
 async def _run_evaluation(evaluation_id: str, request: EvaluateRequest):
     """Run evaluation in background."""
+    import time as _time
+    eval_start = _time.time()
     try:
         await evaluations_col().update_one(
             {"_id": evaluation_id},
             {"$set": {"status": EvalStatus.RUNNING.value, "progress_pct": 10}},
         )
 
-        judge = _get_judge()
+        # Resolve eval mode config
+        mode_config = EVAL_MODES[request.eval_mode.value]
+        logger.info(f"[{evaluation_id[:8]}] Eval mode: {request.eval_mode.value} (max_tools={mode_config.max_tools}, tests={mode_config.test_types}, consensus={mode_config.use_consensus})")
+
+        # Use ConsensusJudge for full mode, LLMJudge for quick/standard
+        if mode_config.use_consensus:
+            from src.core.consensus_judge import ConsensusJudge
+            judge = ConsensusJudge(max_judges=mode_config.max_judges)
+        else:
+            judge = _get_judge()
+        # Reset any exhausted API keys from prior evaluations
+        judge.reset_keys()
         evaluator = Evaluator(judge)
 
         # Step 1: Fetch real manifest from MCP server
+        logger.info(f"[{evaluation_id[:8]}] Step 1: Fetching manifest from {request.target_url}")
         try:
             manifest = await mcp_client.get_server_manifest(request.target_url)
-        except ConnectionError as e:
-            logger.error(f"Cannot connect to target: {e}")
+            logger.info(f"[{evaluation_id[:8]}] Step 1 complete: {manifest.get('name', '?')} with {len(manifest.get('tools', []))} tools via {manifest.get('transport', '?')}")
+        except (ConnectionError, Exception) as e:
+            error_msg = str(e)
+            # Provide user-friendly messages for common errors
+            if "401" in error_msg or "Unauthorized" in error_msg:
+                error_msg = f"MCP server requires authentication (401 Unauthorized): {request.target_url}"
+            elif "403" in error_msg or "Forbidden" in error_msg:
+                error_msg = f"Access denied by MCP server (403 Forbidden): {request.target_url}"
+            elif "404" in error_msg or "Not Found" in error_msg:
+                error_msg = f"MCP endpoint not found (404): {request.target_url}"
+            elif "timeout" in error_msg.lower() or "Timeout" in error_msg:
+                error_msg = f"Connection timed out: {request.target_url}"
+            else:
+                error_msg = f"Cannot connect to MCP server: {error_msg}"
+            logger.error(f"Manifest fetch failed for {request.target_url}: {error_msg}")
             await evaluations_col().update_one(
                 {"_id": evaluation_id},
                 {"$set": {
                     "status": EvalStatus.FAILED.value,
-                    "error": f"Connection failed: {e}",
+                    "error": error_msg,
                 }},
             )
             return
@@ -276,7 +315,9 @@ async def _run_evaluation(evaluation_id: str, request: EvaluateRequest):
         )
 
         # Step 2: Level 1 — Manifest validation
+        logger.info(f"[{evaluation_id[:8]}] Step 2: Validating manifest")
         manifest_result = evaluator.validate_manifest(manifest)
+        logger.info(f"[{evaluation_id[:8]}] Step 2 complete: manifest_score={manifest_result.score}, checks={manifest_result.checks}")
         await evaluations_col().update_one(
             {"_id": evaluation_id},
             {"$set": {"progress_pct": 30}},
@@ -284,6 +325,7 @@ async def _run_evaluation(evaluation_id: str, request: EvaluateRequest):
 
         if request.level == EvalLevel.MANIFEST:
             # Level 1 only: aggregate with manifest score only
+            logger.info(f"[{evaluation_id[:8]}] L1 only — aggregating scores from manifest_score={manifest_result.score}")
             scores = aggregate_scores(
                 tool_scores={},
                 manifest_score=manifest_result.score,
@@ -295,6 +337,7 @@ async def _run_evaluation(evaluation_id: str, request: EvaluateRequest):
                     "manifest_score": manifest_result.score,
                     "checks": manifest_result.checks,
                     "issues": manifest_result.warnings,
+                    "tools_count": len(manifest.get("tools", [])),
                 },
                 "level2": None,
                 "level3": None,
@@ -306,12 +349,27 @@ async def _run_evaluation(evaluation_id: str, request: EvaluateRequest):
                 {"$set": {"progress_pct": 40}},
             )
 
-            tool_responses = await mcp_client.evaluate_server(request.target_url)
+            tool_responses = await mcp_client.evaluate_server(
+                request.target_url,
+                test_types=mode_config.test_types,
+                max_tools=mode_config.max_tools,
+            )
+            logger.info(f"[{evaluation_id[:8]}] Tool responses collected: {len(tool_responses)} tools")
 
             await evaluations_col().update_one(
                 {"_id": evaluation_id},
                 {"$set": {"progress_pct": 60}},
             )
+
+            # Progress callback for granular 60→75% updates
+            async def progress_cb(sub_step: str, sub_pct: float):
+                # Map sub_pct (0.0-1.0) to 60-75% range
+                pct = int(60 + sub_pct * 15)
+                logger.info(f"[{evaluation_id[:8]}] evaluate_full: {sub_step} ({pct}%)")
+                await evaluations_col().update_one(
+                    {"_id": evaluation_id},
+                    {"$set": {"progress_pct": pct}},
+                )
 
             # Judge the tool responses with full 6-axis evaluation
             eval_result = await evaluator.evaluate_full(
@@ -319,7 +377,9 @@ async def _run_evaluation(evaluation_id: str, request: EvaluateRequest):
                 server_url=request.target_url,
                 tool_responses=tool_responses,
                 manifest=manifest,
-                run_safety=True,
+                run_safety=mode_config.run_safety_probes,
+                run_consistency=mode_config.run_consistency_check,
+                progress_cb=progress_cb,
             )
 
             await evaluations_col().update_one(
@@ -405,6 +465,7 @@ async def _run_evaluation(evaluation_id: str, request: EvaluateRequest):
                     "manifest_score": manifest_result.score,
                     "checks": manifest_result.checks,
                     "issues": manifest_result.warnings,
+                    "tools_count": len(manifest.get("tools", [])),
                 },
                 "level2": {
                     "tools_tested": len(tool_responses),
@@ -422,8 +483,11 @@ async def _run_evaluation(evaluation_id: str, request: EvaluateRequest):
             }
 
         now = datetime.utcnow()
+        eval_duration_ms = int((_time.time() - eval_start) * 1000)
+        logger.info(f"[{evaluation_id[:8]}] Scores aggregated: overall={scores.get('overall_score')} tier={scores.get('tier')} duration={eval_duration_ms}ms")
 
         # Create attestation
+        logger.info(f"[{evaluation_id[:8]}] Creating attestation...")
         attestation = create_attestation(
             target_id=request.target_url,
             target_type=request.target_type.value,
@@ -435,6 +499,7 @@ async def _run_evaluation(evaluation_id: str, request: EvaluateRequest):
         from src.storage.mongodb import attestations_col
         await attestations_col().insert_one(attestation)
 
+        logger.info(f"[{evaluation_id[:8]}] Writing final results to DB (status=completed, 100%)")
         await evaluations_col().update_one(
             {"_id": evaluation_id},
             {
@@ -444,10 +509,12 @@ async def _run_evaluation(evaluation_id: str, request: EvaluateRequest):
                     "report": report,
                     "completed_at": now,
                     "progress_pct": 100,
+                    "duration_ms": eval_duration_ms,
                     "attestation_id": attestation_id,
                 }
             },
         )
+        logger.info(f"[{evaluation_id[:8]}] Evaluation COMPLETED: score={scores.get('overall_score')} tier={scores.get('tier')}")
 
         # Update or create score record
         await scores_col().update_one(
@@ -461,6 +528,12 @@ async def _run_evaluation(evaluation_id: str, request: EvaluateRequest):
                     "confidence": scores["confidence"],
                     "evaluation_version": EVALUATION_VERSION,
                     "last_evaluated_at": now,
+                    "last_evaluation_id": evaluation_id,
+                    "tool_scores": {k: v for k, v in scores.get("tool_scores", {}).items()},
+                    "dimensions": scores.get("dimensions", {}),
+                    "safety_report": scores.get("safety_report", []),
+                    "latency_stats": scores.get("latency_stats", {}),
+                    "duration_ms": eval_duration_ms,
                 },
                 "$inc": {"evaluation_count": 1},
                 "$setOnInsert": {"first_evaluated_at": now},
@@ -503,10 +576,15 @@ async def _run_evaluation(evaluation_id: str, request: EvaluateRequest):
             )
 
     except Exception as e:
-        logger.error(f"Evaluation {evaluation_id} failed: {e}")
+        import traceback
+        logger.error(f"Evaluation {evaluation_id} failed: {e}\n{traceback.format_exc()}")
+        # Provide user-friendly error message
+        error_msg = str(e)
+        if "'NoneType'" in error_msg or "AttributeError" in error_msg:
+            error_msg = f"MCP server returned an unexpected response. The server may require authentication or be temporarily unavailable: {request.target_url}"
         await evaluations_col().update_one(
             {"_id": evaluation_id},
-            {"$set": {"status": EvalStatus.FAILED.value, "error": str(e)}},
+            {"$set": {"status": EvalStatus.FAILED.value, "error": error_msg}},
         )
 
 

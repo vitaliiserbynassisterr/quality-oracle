@@ -1,5 +1,5 @@
 """
-Mock MCP Server for Quality Oracle development and testing.
+Mock MCP Server for AgentTrust development and testing.
 
 A FastMCP server with predictable tool responses for evaluating
 the evaluation engine itself. Exposes 4 tools across 2 domains.
@@ -12,7 +12,7 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP(
     "Mock MCP Server",
-    instructions="A mock MCP server with predictable responses for Quality Oracle testing v1.0.0",
+    instructions="A mock MCP server with predictable responses for AgentTrust testing v1.0.0",
     host="0.0.0.0",
     port=8010,
 )

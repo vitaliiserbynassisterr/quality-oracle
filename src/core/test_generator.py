@@ -6,7 +6,7 @@ test cases for functional evaluation using semantic-aware input generation.
 """
 import logging
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -316,19 +316,27 @@ def _generate_expected_behavior(tool_name: str, description: str, input_data: di
 # Main test case generation
 # ---------------------------------------------------------------------------
 
-def generate_test_cases(tools: List[dict]) -> Dict[str, List[dict]]:
+def generate_test_cases(
+    tools: List[dict],
+    test_types: Optional[Set[str]] = None,
+    max_tools: Optional[int] = None,
+) -> Dict[str, List[dict]]:
     """
     Generate test cases from MCP server tool definitions.
 
     Args:
         tools: List of tool definitions with name, description, inputSchema
+        test_types: If provided, only generate these test types (e.g. {"happy_path", "error_handling"})
+        max_tools: If provided, limit to first N tools
 
     Returns:
         Dict of tool_name -> list of test cases {question, expected, input_data, test_type}
     """
     test_cases: Dict[str, List[dict]] = {}
 
-    for tool in tools:
+    target_tools = tools[:max_tools] if max_tools else tools
+
+    for tool in target_tools:
         name = tool.get("name", "unknown")
         description = tool.get("description", "")
         schema = tool.get("inputSchema", tool.get("parameters", {}))
@@ -404,6 +412,9 @@ def generate_test_cases(tools: List[dict]) -> Dict[str, List[dict]]:
                 "test_type": "type_coercion",
                 "input_data": coercion_input,
             })
+
+        if test_types:
+            cases = [c for c in cases if c["test_type"] in test_types]
 
         test_cases[name] = cases
         logger.debug(f"Generated {len(cases)} test cases for tool '{name}'")

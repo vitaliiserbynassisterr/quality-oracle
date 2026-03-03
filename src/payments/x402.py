@@ -1,5 +1,5 @@
 """
-x402 Protocol implementation for Quality Oracle.
+x402 Protocol implementation for AgentTrust.
 
 The x402 protocol uses HTTP 402 Payment Required to gate API access.
 Flow:

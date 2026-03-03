@@ -1,5 +1,5 @@
 """
-Domain-specific question pools for Quality Oracle evaluations.
+Domain-specific question pools for AgentTrust evaluations.
 
 Ported from agent-poi hackathon (poi/question_pools.py + poi/evaluator.py).
 Adapted: domain-agnostic structure for MCP server evaluation.

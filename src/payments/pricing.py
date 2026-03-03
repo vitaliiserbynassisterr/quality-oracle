@@ -32,7 +32,7 @@ LEVEL_PRICES_USD = {
 # Tier discount rates
 TIER_DISCOUNTS = {
     "free": 0.00,
-    "developer": 0.20,
+    "developer": 1.00,  # 100% off during development (was 0.20)
     "team": 0.40,
     "marketplace": 0.60,
 }

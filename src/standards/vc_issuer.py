@@ -1,7 +1,7 @@
 """
 W3C Verifiable Credential issuance — eddsa-jcs-2022 with Ed25519.
 
-Issues QualityAttestation VCs in W3C VC Data Model v2.0 format.
+Issues AgentQualityCredential VCs in W3C VC Data Model v2.0 format.
 Signing: DataIntegrityProof with cryptosuite=eddsa-jcs-2022.
 Key encoding: did:web with Multikey (base58btc multicodec).
 
@@ -153,7 +153,7 @@ def _verify_eddsa_jcs_2022(
 # ── W3C VC v2.0 Creation ────────────────────────────────────────────────────
 
 def create_vc(
-    uaqa_payload: dict,
+    aqvc_payload: dict,
     private_key: Ed25519PrivateKey,
     issuer_did: Optional[str] = None,
     vc_id: Optional[str] = None,
@@ -161,33 +161,33 @@ def create_vc(
     """Create a W3C Verifiable Credential v2.0 with DataIntegrityProof.
 
     Args:
-        uaqa_payload: UAQA attestation payload (from create_attestation).
+        aqvc_payload: AQVC attestation payload (from create_attestation).
         private_key: Ed25519 private key for signing.
-        issuer_did: DID of the issuer. Defaults to did:web:quality-oracle.assisterr.ai.
+        issuer_did: DID of the issuer. Defaults to did:web:agenttrust.assisterr.ai.
         vc_id: Optional VC identifier. Auto-generated if not provided.
 
     Returns:
         Complete VC document with proof.
     """
-    iss = issuer_did or "did:web:quality-oracle.assisterr.ai"
+    iss = issuer_did or "did:web:agenttrust.assisterr.ai"
     cred_id = vc_id or f"urn:uuid:{uuid4()}"
     now = datetime.now(timezone.utc)
 
-    # Extract fields from UAQA payload
-    subject = uaqa_payload.get("subject", {})
-    quality = uaqa_payload.get("quality", {})
-    evaluation = uaqa_payload.get("evaluation", {})
-    expires_at = uaqa_payload.get("expires_at", "")
+    # Extract fields from AQVC payload
+    subject = aqvc_payload.get("subject", {})
+    quality = aqvc_payload.get("quality", {})
+    evaluation = aqvc_payload.get("evaluation", {})
+    expires_at = aqvc_payload.get("expires_at", "")
 
     # Build credential (without proof)
     credential = {
         "@context": [
             "https://www.w3.org/ns/credentials/v2",
             "https://w3id.org/security/data-integrity/v2",
-            "https://quality-oracle.assisterr.ai/contexts/quality/v1",
+            "https://agenttrust.assisterr.ai/contexts/quality/v1",
         ],
         "id": cred_id,
-        "type": ["VerifiableCredential", "QualityAttestation"],
+        "type": ["VerifiableCredential", "AgentQualityCredential"],
         "issuer": iss,
         "validFrom": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "validUntil": expires_at if expires_at else "",
@@ -264,7 +264,7 @@ def build_did_document(
 
     Returns a DID Document suitable for /.well-known/did.json.
     """
-    did = issuer_did or "did:web:quality-oracle.assisterr.ai"
+    did = issuer_did or "did:web:agenttrust.assisterr.ai"
     multibase_key = encode_public_key_multibase(public_key)
 
     return {

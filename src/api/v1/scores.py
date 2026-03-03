@@ -37,6 +37,18 @@ async def get_score(
     if not doc:
         raise HTTPException(status_code=404, detail="No quality score found for this target")
 
+    # Build tool_scores from stored data
+    raw_tool_scores = doc.get("tool_scores", {})
+    from src.storage.models import ToolScore
+    parsed_tool_scores = {}
+    for tname, tdata in raw_tool_scores.items():
+        if isinstance(tdata, dict):
+            parsed_tool_scores[tname] = ToolScore(
+                score=tdata.get("score", 0),
+                tests_passed=tdata.get("tests_passed", 0),
+                tests_total=tdata.get("tests_total", 0),
+            )
+
     response = ScoreResponse(
         target_id=doc["target_id"],
         target_type=TargetType(doc.get("target_type", "mcp_server")),
@@ -45,6 +57,7 @@ async def get_score(
         confidence=doc.get("confidence", 0),
         evaluation_count=doc.get("evaluation_count", 0),
         last_evaluated_at=doc.get("last_evaluated_at"),
+        tool_scores=parsed_tool_scores,
     )
 
     # Cache for 5 min
@@ -89,8 +102,15 @@ async def list_scores(
             "target_type": doc.get("target_type", "mcp_server"),
             "score": doc.get("current_score", 0),
             "tier": doc.get("tier", "failed"),
+            "confidence": doc.get("confidence", 0),
             "evaluation_count": doc.get("evaluation_count", 0),
             "last_evaluated_at": doc.get("last_evaluated_at"),
+            "last_evaluation_id": doc.get("last_evaluation_id"),
+            "dimensions": doc.get("dimensions", {}),
+            "tool_scores": doc.get("tool_scores", {}),
+            "safety_report": doc.get("safety_report", []),
+            "latency_stats": doc.get("latency_stats", {}),
+            "duration_ms": doc.get("duration_ms"),
         })
 
     total = await scores_col().count_documents(query)

@@ -1,4 +1,4 @@
-"""MongoDB connection and collection accessors for Quality Oracle."""
+"""MongoDB connection and collection accessors for AgentTrust."""
 import logging
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 

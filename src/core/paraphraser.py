@@ -1,5 +1,5 @@
 """
-Anti-gaming question paraphraser for Quality Oracle.
+Anti-gaming question paraphraser for AgentTrust.
 
 Prevents servers from memorizing test answers by generating
 unique question variants for each evaluation run.

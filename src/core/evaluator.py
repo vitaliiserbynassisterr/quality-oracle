@@ -1,5 +1,5 @@
 """
-Quality Oracle evaluation engine.
+AgentTrust evaluation engine.
 
 Orchestrates the full evaluation flow:
 Level 1: Manifest validation
@@ -11,7 +11,7 @@ import logging
 import statistics
 import time
 from datetime import datetime
-from typing import AsyncGenerator, Callable, Dict, List, Optional, Tuple
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Tuple
 
 from src.core.llm_judge import LLMJudge, JudgeResult
 from src.core.paraphraser import QuestionParaphraser
@@ -94,7 +94,7 @@ class EvaluationResult:
 
 class Evaluator:
     """
-    Core evaluation engine for Quality Oracle.
+    Core evaluation engine for AgentTrust.
 
     Supports 3 levels of evaluation with increasing depth.
     Accepts LLMJudge or ConsensusJudge (both implement ajudge()).
@@ -178,9 +178,12 @@ class Evaluator:
         # Judge each tool's responses
         all_scores = []
         case_idx = 0
+        total_responses = sum(len(r) for r in tool_responses.values())
+        judged_count = 0
         for tool_name, responses in tool_responses.items():
             tool_scores = []
             tests_passed = 0
+            logger.info(f"[evaluate_functional] Judging tool '{tool_name}' ({len(responses)} responses)")
 
             for resp in responses:
                 # Paraphrase question/expected for anti-gaming
@@ -194,7 +197,9 @@ class Evaluator:
                 judge_result = await self.llm_judge.ajudge(
                     q, exp, resp["answer"],
                 )
+                judged_count += 1
                 tool_scores.append(judge_result.score)
+                logger.debug(f"[evaluate_functional] Judged {judged_count}/{total_responses}: {tool_name} score={judge_result.score} via {judge_result.method}")
                 if judge_result.score >= 50:
                     tests_passed += 1
 
@@ -587,6 +592,8 @@ class Evaluator:
         tool_responses: Dict[str, List[dict]],
         manifest: Optional[dict] = None,
         run_safety: bool = True,
+        run_consistency: bool = True,
+        progress_cb: Optional[Any] = None,
     ) -> EvaluationResult:
         """
         Full multi-dimensional evaluation (6 axes).
@@ -605,13 +612,18 @@ class Evaluator:
             tool_responses: Dict of tool_name -> list of response dicts
             manifest: Optional manifest for Level 1
             run_safety: Whether to run adversarial safety probes
+            run_consistency: Whether to run idempotency/consistency checks
         """
         # Run functional evaluation (accuracy dimension)
+        logger.info(f"[evaluate_full] {target_id}: Starting functional eval ({len(tool_responses)} tools)")
+        if progress_cb:
+            await progress_cb("functional_eval_start", 0.0)
         result = await self.evaluate_functional(
             target_id=target_id,
             tool_responses=tool_responses,
             manifest=manifest,
         )
+        logger.info(f"[evaluate_full] {target_id}: Functional eval done, accuracy={result.overall_score}")
 
         accuracy_score = result.overall_score
         schema_score = result.manifest_result.score if result.manifest_result else 50
@@ -619,24 +631,31 @@ class Evaluator:
         # Safety dimension — adversarial probes
         safety_score = 50  # Neutral default
         if run_safety and manifest:
+            if progress_cb:
+                await progress_cb("safety_probes_start", 0.4)
             try:
                 from src.core.adversarial import run_safety_probes
                 tools = manifest.get("tools", [])
+                logger.info(f"[evaluate_full] {target_id}: Running safety probes on {len(tools)} tools")
                 safety_report = await run_safety_probes(server_url, tools)
                 safety_score = safety_report.safety_score
                 result.safety_report = safety_report.to_dict()
+                logger.info(f"[evaluate_full] {target_id}: Safety probes done, score={safety_score}")
             except Exception as e:
-                logger.warning(f"Safety probes failed: {e}")
+                logger.warning(f"Safety probes failed for {target_id}: {e}")
 
         # Process quality dimension — error handling, validation, structure
         process_quality_score = 50  # Neutral default
+        if progress_cb:
+            await progress_cb("process_quality", 0.7)
         try:
             from src.core.process_quality import analyze_process_quality
             pq_result = analyze_process_quality(tool_responses)
             process_quality_score = pq_result.score
             result.process_quality_report = pq_result.to_dict()
+            logger.info(f"[evaluate_full] {target_id}: Process quality done, score={process_quality_score}")
         except Exception as e:
-            logger.warning(f"Process quality analysis failed: {e}")
+            logger.warning(f"Process quality analysis failed for {target_id}: {e}")
 
         # Latency dimension — from tool response latencies
         all_latencies = []
@@ -664,10 +683,13 @@ class Evaluator:
 
         # Reliability dimension — actual response consistency (idempotency check)
         reliability_score = 50  # Neutral default
-        if manifest:
+        if run_consistency and manifest:
+            if progress_cb:
+                await progress_cb("reliability_check", 0.85)
             try:
                 from src.core.mcp_client import check_response_consistency
                 tools = manifest.get("tools", [])
+                logger.info(f"[evaluate_full] {target_id}: Running consistency check on {len(tools)} tools")
                 consistency = await check_response_consistency(server_url, tools, sample_size=2)
                 if consistency:
                     avg_consistency = sum(consistency.values()) / len(consistency)
@@ -682,8 +704,9 @@ class Evaluator:
                         reliability_score = 40
                     else:
                         reliability_score = 20
+                logger.info(f"[evaluate_full] {target_id}: Consistency check done, reliability={reliability_score}")
             except Exception as e:
-                logger.warning(f"Consistency check failed: {e}")
+                logger.warning(f"Consistency check failed for {target_id}: {e}")
 
         # Multi-dimensional aggregate (6 axes, weighted)
         dimensions = {

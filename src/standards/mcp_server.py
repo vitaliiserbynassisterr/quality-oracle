@@ -1,5 +1,5 @@
 """
-Quality Oracle as an MCP Server.
+AgentTrust as an MCP Server.
 
 Exposes quality evaluation as MCP tools that any MCP client
 (Claude, Cursor, Windsurf, etc.) can call directly.
@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 _log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
 
 mcp = FastMCP(
-    "quality-oracle",
+    "agenttrust",
     log_level=_log_level,
-    instructions="AI Agent & MCP Server quality evaluation service v0.1.0",
+    instructions="AgentTrust — AI Agent & MCP Server quality evaluation service v0.1.0",
     host="0.0.0.0",
     port=8003,
 )
@@ -235,7 +235,7 @@ async def get_score(server_url: str) -> str:
 
 @mcp.tool()
 async def verify_attestation(attestation_jwt: str) -> str:
-    """Verify a UAQA quality attestation JWT. Checks signature validity and returns the decoded payload.
+    """Verify an AQVC quality attestation JWT. Checks signature validity and returns the decoded payload.
 
     Args:
         attestation_jwt: The JWT attestation string to verify
@@ -261,7 +261,7 @@ async def verify_attestation(attestation_jwt: str) -> str:
 
 
 def main():
-    """Run Quality Oracle MCP server via SSE on port 8003."""
+    """Run AgentTrust MCP server via SSE on port 8003."""
     mcp.run(transport="sse")
 
 

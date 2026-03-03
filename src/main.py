@@ -1,4 +1,4 @@
-"""Quality Oracle - Active competency verification for AI agents and MCP servers."""
+"""AgentTrust - Active competency verification for AI agents and MCP servers."""
 import logging
 from contextlib import asynccontextmanager
 
@@ -27,18 +27,18 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting Quality Oracle...")
+    logger.info("Starting AgentTrust...")
     await connect_db()
     await connect_redis()
-    logger.info(f"Quality Oracle running on port {settings.port}")
+    logger.info(f"AgentTrust running on port {settings.port}")
     yield
-    logger.info("Shutting down Quality Oracle...")
+    logger.info("Shutting down AgentTrust...")
     await close_db()
     await close_redis()
 
 
 app = FastAPI(
-    title="Quality Oracle",
+    title="AgentTrust",
     description="Active competency verification for AI agents, MCP servers, and skills.",
     version="0.1.0",
     lifespan=lifespan,

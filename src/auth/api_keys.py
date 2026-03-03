@@ -1,4 +1,4 @@
-"""API key management for Quality Oracle."""
+"""API key management for AgentTrust."""
 import hashlib
 import logging
 import secrets

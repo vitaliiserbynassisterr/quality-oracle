@@ -18,7 +18,13 @@ def aggregate_scores(
     """
     weights = {"manifest": 0.0, "functional": 1.0, "domain": 0.0}
 
-    if manifest_score is not None and domain_scores:
+    # Determine if this is L1-only (no functional tests ran)
+    l1_only = manifest_score is not None and not tool_scores
+
+    if l1_only:
+        # L1 only: manifest is the entire score (capped with confidence penalty)
+        weights = {"manifest": 1.0, "functional": 0.0, "domain": 0.0}
+    elif manifest_score is not None and domain_scores:
         weights = {"manifest": 0.10, "functional": 0.60, "domain": 0.30}
     elif manifest_score is not None:
         weights = {"manifest": 0.15, "functional": 0.85, "domain": 0.0}

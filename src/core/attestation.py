@@ -1,7 +1,7 @@
 """
-UAQA attestation issuance — Phase 1: JWT signing (Ed25519).
+AQVC attestation issuance — Phase 1: JWT signing (Ed25519).
 
-Issues UAQA (Universal Agent Quality Attestation) as signed JWTs.
+Issues AQVC (Agent Quality Verifiable Credential) as signed JWTs.
 Phase 2 (Week 5+): wrap in W3C Verifiable Credential envelope via src/standards/vc_issuer.py.
 """
 import logging
@@ -86,12 +86,12 @@ def create_attestation(
     validity_days: int | None = None,
 ) -> dict:
     """
-    Create a UAQA attestation as a signed JWT.
+    Create an AQVC attestation as a signed JWT.
 
     Returns a dict ready for MongoDB insertion with:
     - _id: attestation ID
     - attestation_jwt: signed JWT string
-    - uaqa_payload: raw UAQA JSON payload
+    - aqvc_payload: raw AQVC JSON payload
     - evaluation_version, issued_at, expires_at
     """
     now = datetime.utcnow()
@@ -100,9 +100,9 @@ def create_attestation(
     exp_days = validity_days or settings.attestation_validity_days
     expires_at = now + timedelta(days=exp_days)
 
-    # UAQA payload (canonical format, used in both JWT and future VC)
-    uaqa_payload = {
-        "uaqa_version": "1.0",
+    # AQVC payload (canonical format, used in both JWT and future VC)
+    aqvc_payload = {
+        "aqvc_version": "1.0",
         "issuer": iss,
         "issued_at": now.isoformat() + "Z",
         "expires_at": expires_at.isoformat() + "Z",
@@ -139,7 +139,7 @@ def create_attestation(
     )
 
     token = jwt.encode(
-        uaqa_payload,
+        aqvc_payload,
         private_pem,
         algorithm="EdDSA",
         headers={"kid": f"{iss}#key-1"},
@@ -147,24 +147,24 @@ def create_attestation(
 
     logger.info(
         f"Created JWT attestation {attestation_id} for {target_id}: "
-        f"score={uaqa_payload['quality']['score']}"
+        f"score={aqvc_payload['quality']['score']}"
     )
 
     # Create W3C Verifiable Credential envelope
     vc_document = None
     try:
         from src.standards.vc_issuer import create_vc
-        vc_document = create_vc(uaqa_payload, key, issuer_did=iss)
+        vc_document = create_vc(aqvc_payload, key, issuer_did=iss)
         logger.info(f"Created W3C VC for attestation {attestation_id}")
     except Exception as e:
         logger.warning(f"Failed to create W3C VC: {e}")
 
     return {
         "_id": attestation_id,
-        "evaluation_id": uaqa_payload["evaluation"]["id"],
+        "evaluation_id": aqvc_payload["evaluation"]["id"],
         "target_id": target_id,
         "attestation_jwt": token,
-        "uaqa_payload": uaqa_payload,
+        "aqvc_payload": aqvc_payload,
         "vc_document": vc_document,
         "evaluation_version": evaluation_version,
         "issued_at": now,

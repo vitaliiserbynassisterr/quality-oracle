@@ -1,4 +1,4 @@
-"""Pydantic models for Quality Oracle data."""
+"""Pydantic models for AgentTrust data."""
 from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -39,12 +39,19 @@ class ConnectionStrategy(str, Enum):
     A2A = "a2a"
 
 
+class EvalMode(str, Enum):
+    QUICK = "quick"
+    STANDARD = "standard"
+    FULL = "full"
+
+
 # Request models
 class EvaluateRequest(BaseModel):
     target_url: str
     target_type: TargetType = TargetType.MCP_SERVER
     level: EvalLevel = EvalLevel.FUNCTIONAL
     domains: List[str] = []
+    eval_mode: EvalMode = EvalMode.STANDARD
     webhook_url: Optional[str] = None
     callback_secret: Optional[str] = None
 
@@ -86,10 +93,12 @@ class EvaluationStatus(BaseModel):
     tier: Optional[str] = None
     evaluation_version: Optional[str] = None
     report: Optional[Dict[str, Any]] = None
+    scores: Optional[Dict[str, Any]] = None
     attestation_jwt: Optional[str] = None
     badge_url: Optional[str] = None
     result: Optional[ScoreResponse] = None
     error: Optional[str] = None
+    duration_ms: Optional[int] = None  # wall-clock eval time
 
 
 # Webhook payload model

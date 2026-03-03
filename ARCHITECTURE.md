@@ -1,12 +1,12 @@
-# Quality Oracle — Final Architecture & Implementation Plan
+# AgentTrust — Final Architecture & Implementation Plan
 
 ## 1. IDEA (Short)
 
-**Quality Oracle = active competency verification for AI agents, skills, and MCP servers.**
+**AgentTrust = active competency verification for AI agents, skills, and MCP servers.**
 
 Every agent economy needs three layers: Identity (who is this agent?), Quality (is this agent competent?), Payment (how to pay?). Identity exists (SATI, ERC-8004). Payments exist (x402, AP2). Quality is missing. We fill that gap.
 
-How: challenge-response benchmarking where Quality Oracle calls the agent/skill/server with calibrated test inputs, LLM-as-Judge evaluates responses, and results are published as signed attestations (JWT → W3C VC) portable across A2A, MCP, on-chain, and framework ecosystems.
+How: challenge-response benchmarking where AgentTrust calls the agent/skill/server with calibrated test inputs, LLM-as-Judge evaluates responses, and results are published as signed AQVC attestations (JWT → W3C VC) portable across A2A, MCP, on-chain, and framework ecosystems.
 
 First domain: MCP Servers (biggest pain point post-ClawHavoc, clearest test surface via JSON schemas, natural distribution as MCP Server itself).
 
@@ -28,7 +28,7 @@ First domain: MCP Servers (biggest pain point post-ClawHavoc, clearest test surf
                     └──────────┬───────────────────────┘
                                │
                     ┌──────────▼───────────────────────┐
-                    │      QUALITY ORACLE SERVICE       │
+                    │      AGENTTRUST SERVICE            │
                     │         (FastAPI, port 8002)      │
                     │                                  │
                     │  ┌─────────┐  ┌──────────────┐   │
@@ -56,7 +56,7 @@ First domain: MCP Servers (biggest pain point post-ClawHavoc, clearest test surf
                     │  │            │              │   │
                     │  │  ┌─────────▼───────────┐  │   │
                     │  │  │ Scorer + Attestor   │  │   │
-                    │  │  │ (UAQA / JWT → VC)   │  │   │
+                    │  │  │ (AQVC / JWT → VC)   │  │   │
                     │  │  └─────────────────────┘  │   │
                     │  └───────────────────────────┘   │
                     │                                  │
@@ -105,11 +105,11 @@ quality-oracle/
 │   │   ├── test_generator.py       # NEW: manifest → test cases auto-generation
 │   │   ├── mcp_client.py           # NEW: MCP client to call target servers (Strategy A: SSE/HTTP)
 │   │   ├── scoring.py              # Score aggregation, tiers, confidence
-│   │   └── attestation.py          # UAQA format, JWT signing (Phase 1), VC signing (Phase 2)
+│   │   └── attestation.py          # AQVC format, JWT signing (Phase 1), VC signing (Phase 2)
 │   │
 │   ├── standards/
 │   │   ├── a2a_extension.py        # A2A Agent Card quality extension
-│   │   ├── mcp_server.py           # Quality Oracle as MCP Server (FastMCP)
+│   │   ├── mcp_server.py           # AgentTrust as MCP Server (FastMCP)
 │   │   ├── vc_issuer.py            # W3C Verifiable Credential issuance (Phase 2, Week 5+)
 │   │   └── badge_renderer.py       # SVG badge generation
 │   │
@@ -224,7 +224,7 @@ quality__attestations
   - _id, evaluation_id, target_id
   - attestation_jwt (signed JWT string — Phase 1)
   - vc_document (full W3C VC JSON — Phase 2, Week 5+)
-  - uaqa_payload (raw UAQA JSON, used in both phases)
+  - aqvc_payload (raw AQVC JSON, used in both phases)
   - evaluation_version (string)
   - issued_at, expires_at
   - revoked (bool), revoked_reason
@@ -333,7 +333,7 @@ GET    /v1/evaluate/{eval_id}    # Poll evaluation status + get report
       "level3": null
     },
     "attestation_jwt": "eyJ...",
-    "badge_url": "https://quality-oracle.assisterr.ai/v1/badge/srv_123.svg"
+    "badge_url": "https://agenttrust.assisterr.ai/v1/badge/srv_123.svg"
   }
 
 # Scores
@@ -370,10 +370,10 @@ POST   /v1/enrich-agent-card     # Add quality data to an A2A Agent Card
 # A2A Protocol
 POST   /v1/a2a                   # A2A JSON-RPC handler
   Methods: tasks/send, tasks/get, tasks/cancel
-  Quality Oracle acts as A2A agent accepting evaluation tasks
+  AgentTrust acts as A2A agent accepting evaluation tasks
 
 # Agent Card (A2A Discovery)
-GET    /.well-known/agent.json   # A2A Agent Card for Quality Oracle itself
+GET    /.well-known/agent.json   # A2A Agent Card for AgentTrust itself
   Returns: A2A-compliant agent card with capabilities
 
 # MCP Server (separate process)
@@ -443,12 +443,12 @@ Level 3: Domain Expert Testing (2-5min, premium)
   └── Result: Certification level (Expert/Proficient/Basic)
 ```
 
-### 2.7 UAQA (Universal Agent Quality Attestation) Format
+### 2.7 AQVC (Agent Quality Verifiable Credential) Format
 
-UAQA is the canonical attestation format. It's designed to be forward-compatible with W3C Verifiable Credentials but starts as a simpler signed JWT for MVP.
+AQVC is the canonical attestation format — the AgentTrust standard. It's designed to be forward-compatible with W3C Verifiable Credentials but starts as a simpler signed JWT for MVP.
 
 **Phase 1 (Weeks 1-4): Signed JWT**
-- Attestation payload structured as UAQA JSON (see below)
+- Attestation payload structured as AQVC JSON (see below)
 - Signed as JWT (Ed25519 via PyJWT) — simple, well-understood, easy to verify
 - `GET /v1/attestation/{id}` returns JWT string
 - `GET /v1/attestation/{id}/verify` decodes and validates signature
@@ -456,16 +456,16 @@ UAQA is the canonical attestation format. It's designed to be forward-compatible
 
 **Phase 2 (Weeks 5+): W3C Verifiable Credential**
 - When integrating with SATI/ERC-8004 which consume VCs natively
-- Wrap existing UAQA payload in W3C VC envelope
+- Wrap existing AQVC payload in W3C VC envelope
 - Add JSON-LD `@context`, `proof` block with Ed25519Signature2020
 - Backward-compatible: JWT endpoint still works, VC endpoint added as `/v1/attestation/{id}/vc`
 
-**UAQA Payload (used in both phases):**
+**AQVC Payload (used in both phases):**
 
 ```json
 {
-  "uaqa_version": "1.0",
-  "issuer": "did:web:quality-oracle.assisterr.ai",
+  "aqvc_version": "1.0",
+  "issuer": "did:web:agenttrust.assisterr.ai",
   "issued_at": "2026-02-23T12:00:00Z",
   "expires_at": "2026-03-25T12:00:00Z",
   "evaluation_version": "v1.0",
@@ -509,11 +509,11 @@ UAQA is the canonical attestation format. It's designed to be forward-compatible
 
 ### 2.8 Target Connection Strategies
 
-MCP servers use different transport mechanisms. Quality Oracle must handle all of them.
+MCP servers use different transport mechanisms. AgentTrust must handle all of them.
 
 **Strategy A: SSE / Streamable HTTP (preferred, MVP default)**
 - Target provides a publicly accessible URL (SSE or Streamable HTTP endpoint)
-- Quality Oracle connects via MCP SSE client from the `mcp` SDK
+- AgentTrust connects via MCP SSE client from the `mcp` SDK
 - Works for: hosted MCP servers, Smithery-proxied servers, any server with HTTP transport
 - This is the only strategy needed for Week 1-4 MVP
 - Most Smithery-listed servers expose HTTP/SSE endpoints
@@ -533,7 +533,7 @@ MCP servers use different transport mechanisms. Quality Oracle must handle all o
 - Implementation: Week 7+
 
 **Strategy D: Agent-Initiated (for A2A agents)**
-- Quality Oracle sends A2A task to target agent via A2A protocol
+- AgentTrust sends A2A task to target agent via A2A protocol
 - Agent processes challenge questions and returns responses
 - No MCP needed — pure A2A JSON-RPC flow
 - Implementation: Week 4 (alongside A2A integration)
@@ -550,7 +550,7 @@ MCP servers use different transport mechanisms. Quality Oracle must handle all o
 
 ### 2.9 Anti-Gaming & Adversarial Resistance
 
-An MCP server or agent could detect it's being evaluated and return artificially better responses. Quality Oracle uses 5 layers of defense:
+An MCP server or agent could detect it's being evaluated and return artificially better responses. AgentTrust uses 5 layers of defense:
 
 **Layer 1: Timing Randomization**
 - Evaluations are not scheduled at predictable intervals
@@ -591,9 +591,9 @@ An MCP server or agent could detect it's being evaluated and return artificially
 
 ### 3.1 Integration Matrix
 
-| Standard | How Quality Oracle Integrates | MVP? |
+| Standard | How AgentTrust Integrates | MVP? |
 |----------|------------------------------|------|
-| **Google A2A** | Quality Oracle IS an A2A agent; publishes Agent Card with quality extension | Yes |
+| **Google A2A** | AgentTrust IS an A2A agent; publishes Agent Card with quality extension | Yes |
 | **Anthropic MCP** | Published as MCP Server on PyPI; evaluates MCP servers as primary target | Yes |
 | **W3C VCs** | Phase 1: JWT attestations. Phase 2 (Week 5+): full W3C VC format for SATI/ERC-8004 | Phase 2 |
 | **OpenAPI 3.1** | Full API spec with x-quality extensions | Yes |
@@ -607,8 +607,8 @@ An MCP server or agent could detect it's being evaluated and return artificially
 
 1. **Extension-only** — never fork standards, use official extension mechanisms
 2. **Protocol-agnostic evaluation** — same engine evaluates MCP servers, ClawHub skills, REST agents, A2A agents
-3. **UAQA as canonical** — one internal format, multiple external projections
-4. **Quality Oracle IS an A2A agent** — speaks A2A natively, not just extends it
+3. **AQVC as canonical** — one internal format, multiple external projections
+4. **AgentTrust IS an A2A agent** — speaks A2A natively, not just extends it
 5. **MCP-first distribution** — any IDE with MCP support gets instant access
 6. **Progressive trust** — JWT → W3C VC → on-chain, complexity only when needed
 
@@ -674,7 +674,7 @@ An MCP server or agent could detect it's being evaluated and return artificially
 
 ### Week 3: MCP Server + ClawHub Scan (Days 11-15)
 
-**Day 11-12: Quality Oracle as MCP Server**
+**Day 11-12: AgentTrust as MCP Server**
 - [ ] Implement FastMCP server with tools:
   - `check_quality(server_url)` → score + report
   - `find_best(domain, min_score)` → ranked list
@@ -693,7 +693,7 @@ An MCP server or agent could detect it's being evaluated and return artificially
 - [ ] Full scan report with data visualizations
 - [ ] **X thread: "We scanned 1,247 MCP servers. 23% fail basic tests."**
 
-**Deliverable:** Quality Oracle available as MCP Server in IDE. Mass scan report published.
+**Deliverable:** AgentTrust available as MCP Server in IDE. Mass scan report published.
 
 ---
 
@@ -701,7 +701,7 @@ An MCP server or agent could detect it's being evaluated and return artificially
 
 **Day 16-17: Agent Card Enrichment + A2A**
 - [ ] `POST /v1/enrich-agent-card` endpoint
-- [ ] `GET /.well-known/agent.json` — Quality Oracle Agent Card
+- [ ] `GET /.well-known/agent.json` — AgentTrust Agent Card
 - [ ] `POST /v1/a2a` — JSON-RPC handler (tasks/send, tasks/get)
 - [ ] Quality extension schema for other agents' Agent Cards
 - [ ] A2A task flow: receive evaluation request → process → return result (Strategy D)
@@ -716,7 +716,7 @@ An MCP server or agent could detect it's being evaluated and return artificially
 - [ ] HTTP 402 payment gate for Level 2+ evaluations
 - [ ] x402 facilitator integration for accepting payments
 - [ ] Free tier: Level 1 only, 10 evals/month
-- [ ] **X thread: "Quality Oracle + x402 = trust before you pay."**
+- [ ] **X thread: "AgentTrust + x402 = trust before you pay."**
 
 **Deliverable:** Standards-compliant service with JWT attestations, A2A, webhooks, and x402.
 
@@ -737,7 +737,7 @@ An MCP server or agent could detect it's being evaluated and return artificially
 - [ ] Add quality_score, quality_badges to incentive__slm_agents schema
 - [ ] Dashboard endpoint for quality trends
 - [ ] Strategy B implementation: Docker sandbox for stdio MCP servers
-- [ ] **X thread: "Quality Oracle goes on-chain via SATI."**
+- [ ] **X thread: "AgentTrust goes on-chain via SATI."**
 
 **Day 27-30: Level 3 + Question Bank**
 - [ ] Domain-specific question banks (5 domains: code, defi, data, search, general)
@@ -746,7 +746,7 @@ An MCP server or agent could detect it's being evaluated and return artificially
 - [ ] Canary question system
 - [ ] Level 3 certification flow
 - [ ] 7-day per-agent re-evaluation cooldown with jitter
-- [ ] **X thread: "Assisterr agents now verified by Quality Oracle."**
+- [ ] **X thread: "Assisterr agents now verified by AgentTrust."**
 
 **Deliverable:** On-chain attestations, Assisterr integration, Level 3 certification, anti-gaming.
 
@@ -775,7 +775,7 @@ An MCP server or agent could detect it's being evaluated and return artificially
 - [ ] Smithery integration proposal (quality badges in registry)
 - [ ] SendAI Agent Kit plugin
 - [ ] Content: Show HN, r/LangChain, Dev.to tutorial
-- [ ] **X thread: "Quality Oracle is now a GitHub Action."**
+- [ ] **X thread: "AgentTrust is now a GitHub Action."**
 
 **Deliverable:** Framework SDKs, CI/CD integration, self-service API, partnership outreach.
 

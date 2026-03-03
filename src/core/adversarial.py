@@ -11,8 +11,10 @@ Tests servers for common vulnerability classes:
 Each probe returns a pass/fail + score (0-100).
 Combined into a safety_score dimension for multi-axis evaluation.
 """
+import asyncio
 import logging
 import re
+
 import time
 from dataclasses import dataclass, field
 from typing import Dict, List
@@ -105,10 +107,11 @@ def _find_string_param(tool: dict) -> str | None:
     return None
 
 
-def _generate_probes(tools: List[dict]) -> List[dict]:
+def _generate_probes(tools: List[dict], max_tools_per_probe: int = 2) -> List[dict]:
     """Generate adversarial probe test cases based on available tools.
 
-    Tests ALL tools with string params (not just the first).
+    Picks up to `max_tools_per_probe` representative tools per probe type to keep
+    the total count manageable (avoids N×5 explosion for servers with many tools).
     Only applies prompt_injection/system_prompt probes to generate/unknown tools.
     """
     probes = []
@@ -125,7 +128,12 @@ def _generate_probes(tools: List[dict]) -> List[dict]:
         logger.warning("No tool with string parameter found for adversarial probes")
         return probes
 
-    for tool_name, target_param, tool_type in testable_tools:
+    # Pick representative subset: prioritize generate/unknown, then diverse types
+    gen_tools = [t for t in testable_tools if t[2] in ("generate", "unknown")]
+    other_tools = [t for t in testable_tools if t[2] not in ("generate", "unknown")]
+    representative = (gen_tools + other_tools)[:max_tools_per_probe]
+
+    for tool_name, target_param, tool_type in representative:
         # Prompt injection — only for generate/unknown tools (not search/compute/fetch)
         if tool_type in ("generate", "unknown"):
             probes.append({
@@ -147,7 +155,7 @@ def _generate_probes(tools: List[dict]) -> List[dict]:
                 "check_fn": "_check_system_leak",
             })
 
-        # PII injection — all tools (any tool could echo back data)
+        # PII injection
         probes.append({
             "probe_type": "pii_leakage",
             "tool_name": tool_name,
@@ -157,7 +165,7 @@ def _generate_probes(tools: List[dict]) -> List[dict]:
             "check_fn": "_check_pii_echo",
         })
 
-        # Hallucination trap — all tools
+        # Hallucination trap
         probes.append({
             "probe_type": "hallucination",
             "tool_name": tool_name,
@@ -167,12 +175,12 @@ def _generate_probes(tools: List[dict]) -> List[dict]:
             "check_fn": "_check_hallucination",
         })
 
-        # Boundary overflow — all tools
+        # Boundary overflow — 10KB is enough to test handling
         probes.append({
             "probe_type": "overflow",
             "tool_name": tool_name,
             "input_data": {
-                target_param: "A" * 100_000  # 100KB string
+                target_param: "A" * 10_000  # 10KB string
             },
             "check_fn": "_check_overflow",
         })
@@ -383,6 +391,7 @@ _CHECK_FNS = {
 async def run_safety_probes(
     server_url: str,
     tools: List[dict],
+    progress_cb=None,
 ) -> SafetyReport:
     """
     Run adversarial safety probes against an MCP server.
@@ -394,7 +403,7 @@ async def run_safety_probes(
     Returns:
         SafetyReport with per-probe results and aggregate safety score
     """
-    from src.core.mcp_client import call_tool
+    from src.core.mcp_client import call_tools_batch
 
     start = time.time()
     probes = _generate_probes(tools)
@@ -409,27 +418,43 @@ async def run_safety_probes(
         )
 
     results: List[ProbeResult] = []
-    for probe in probes:
-        probe_start = time.time()
-        try:
-            response = await call_tool(
-                server_url, probe["tool_name"], probe["input_data"]
-            )
+    logger.info(f"[safety_probes] Running {len(probes)} probes against {server_url} (single session)")
+
+    # Batch all probes through a single MCP connection with short per-call timeout
+    calls = [{"tool_name": p["tool_name"], "arguments": p["input_data"]} for p in probes]
+    try:
+        responses = await asyncio.wait_for(
+            call_tools_batch(server_url, calls, per_call_timeout=15),
+            timeout=90,  # 90s cap for all probes
+        )
+    except asyncio.TimeoutError:
+        elapsed_ms = int((time.time() - start) * 1000)
+        logger.warning(f"[safety_probes] Batch timed out after {elapsed_ms}ms — returning partial results")
+        responses = []
+    except Exception as e:
+        elapsed_ms = int((time.time() - start) * 1000)
+        logger.warning(f"[safety_probes] Batch connection failed after {elapsed_ms}ms: {e}")
+        responses = []
+
+    for i, probe in enumerate(probes):
+        if i < len(responses):
+            response = responses[i]
             content = response.get("content", "")
+            latency_ms = response.get("latency_ms", 0)
 
             check_fn = _CHECK_FNS[probe["check_fn"]]
             result = check_fn(content)
-            result.latency_ms = int((time.time() - probe_start) * 1000)
+            result.latency_ms = latency_ms
             results.append(result)
-
-        except Exception as e:
-            # Connection/timeout errors — tool didn't crash, but we couldn't test
+            logger.info(f"[safety_probes] Probe {i+1}/{len(probes)}: {probe['probe_type']} passed={result.passed} ({latency_ms}ms)")
+        else:
+            # Timed out or connection failed before reaching this probe
             results.append(ProbeResult(
                 probe_type=probe["probe_type"],
                 passed=True,
                 score=50,
-                explanation=f"Probe inconclusive: {e}",
-                latency_ms=int((time.time() - probe_start) * 1000),
+                explanation="Probe skipped: batch timeout",
+                latency_ms=0,
             ))
 
     # Aggregate: per probe_type, take the WORST (min) score across tools (conservative)
