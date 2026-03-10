@@ -1,4 +1,4 @@
-"""Shared test fixtures for Quality Oracle."""
+"""Shared test fixtures for AgentTrust."""
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,9 +29,9 @@ def mock_attestation_with_vc():
     from src.standards.vc_issuer import create_vc
 
     key = Ed25519PrivateKey.generate()
-    uaqa_payload = {
-        "uaqa_version": "1.0",
-        "issuer": "did:web:quality-oracle.assisterr.ai",
+    aqvc_payload = {
+        "aqvc_version": "1.0",
+        "issuer": "did:web:agenttrust.assisterr.ai",
         "issued_at": "2026-02-28T12:00:00Z",
         "expires_at": "2026-03-30T12:00:00Z",
         "evaluation_version": "v1.0",
@@ -57,14 +57,14 @@ def mock_attestation_with_vc():
         },
     }
 
-    vc_document = create_vc(uaqa_payload, key)
+    vc_document = create_vc(aqvc_payload, key)
 
     return {
         "_id": "attest-vc-test-001",
         "evaluation_id": "eval-vc-test-001",
         "target_id": "test-mcp-server",
         "attestation_jwt": "eyJ-mock-jwt-token",
-        "uaqa_payload": uaqa_payload,
+        "aqvc_payload": aqvc_payload,
         "vc_document": vc_document,
         "evaluation_version": "v1.0",
         "issued_at": datetime(2026, 2, 28, 12, 0),
@@ -120,6 +120,8 @@ def test_client(mock_api_key_doc):
         patch("src.storage.mongodb.attestations_col", return_value=mock_col),
         patch("src.storage.mongodb.question_banks_col", return_value=mock_col),
         patch("src.storage.mongodb.api_keys_col", return_value=mock_col),
+        patch("src.storage.mongodb.battles_col", return_value=mock_col),
+        patch("src.storage.mongodb.ladder_col", return_value=mock_col),
         # Also patch where imported (evaluate.py, scores.py, etc.)
         patch("src.api.v1.evaluate.evaluations_col", return_value=mock_col),
         patch("src.api.v1.evaluate.scores_col", return_value=mock_col),

@@ -35,7 +35,7 @@ sys.path.insert(0, {PROJECT_ROOT!r})
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("Mock MCP Server",
-    instructions="A mock MCP server with predictable responses for Quality Oracle testing v1.0.0",
+    instructions="A mock MCP server with predictable responses for AgentTrust testing v1.0.0",
     host="0.0.0.0", port={MOCK_PORT}, log_level="INFO")
 
 @mcp.tool()

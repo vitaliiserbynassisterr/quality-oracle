@@ -1,8 +1,8 @@
 """
-LLM-as-Judge for Quality Oracle evaluation scoring.
+LLM-as-Judge for AgentTrust evaluation scoring.
 
 Ported from agent-poi hackathon (poi/llm_judge.py).
-Adapted for Quality Oracle: OpenAI primary, DeepSeek fallback, Groq fallback2, fuzzy fallback.
+Adapted for AgentTrust: OpenAI primary, DeepSeek fallback, Groq fallback2, fuzzy fallback.
 """
 import asyncio
 import hashlib
@@ -284,11 +284,46 @@ class CacheEntry:
     timestamp: float
 
 
+class _KeyRotator:
+    """Round-robin API key rotator for providers with multiple keys."""
+
+    def __init__(self, keys_csv: str):
+        self._keys = [k.strip() for k in keys_csv.split(",") if k.strip()]
+        self._index = 0
+        self._exhausted: set = set()  # keys that returned quota errors
+
+    @property
+    def current(self) -> Optional[str]:
+        available = [k for k in self._keys if k not in self._exhausted]
+        if not available:
+            return None
+        return available[self._index % len(available)]
+
+    def reset_exhausted(self):
+        """Reset exhausted keys (call between evaluations or after cooldown)."""
+        self._exhausted.clear()
+
+    def rotate(self, exhausted: bool = False):
+        """Rotate to next key. If exhausted=True, mark current key as rate-limited."""
+        if exhausted and self.current:
+            self._exhausted.add(self.current)
+        self._index += 1
+
+    @property
+    def key_count(self) -> int:
+        return len(self._keys)
+
+    @property
+    def available_count(self) -> int:
+        return len([k for k in self._keys if k not in self._exhausted])
+
+
 class LLMJudge:
     """
     LLM-as-Judge for evaluating MCP server / agent responses.
 
-    Provider priority: OpenAI gpt-4o-mini → DeepSeek → Groq → Fuzzy fallback.
+    Provider priority: Cerebras → Groq → OpenRouter → Fuzzy fallback.
+    Supports key rotation: comma-separated keys in env vars rotate on rate limit.
     Results are cached to avoid duplicate API calls.
     """
 
@@ -316,23 +351,40 @@ class LLMJudge:
         fallback2_model: str = "llama-3.3-70b-versatile",
         fallback2_provider: str = "groq",
     ):
-        self.api_key = api_key
+        # Support comma-separated keys for rotation
+        self._primary_rotator = _KeyRotator(api_key) if api_key else None
+        self.api_key = self._primary_rotator.current if self._primary_rotator else None
         self.model = model
         self.provider = provider
         self.base_url = base_url
-        self.fallback_key = fallback_key
+        self._fallback_rotator = _KeyRotator(fallback_key) if fallback_key else None
+        self.fallback_key = self._fallback_rotator.current if self._fallback_rotator else None
         self.fallback_model = fallback_model
         self.fallback_provider = fallback_provider
-        self.fallback2_key = fallback2_key
+        self._fallback2_rotator = _KeyRotator(fallback2_key) if fallback2_key else None
+        self.fallback2_key = self._fallback2_rotator.current if self._fallback2_rotator else None
         self.fallback2_model = fallback2_model
         self.fallback2_provider = fallback2_provider
         self._cache: Dict[str, CacheEntry] = {}
-        self._llm_available = bool(api_key)
+        self._llm_available = bool(self.api_key)
 
         if self._llm_available:
-            logger.info(f"LLM Judge: provider={provider}, model={model}")
+            keys_info = []
+            if self._primary_rotator:
+                keys_info.append(f"{provider}:{self._primary_rotator.key_count} keys")
+            if self._fallback_rotator:
+                keys_info.append(f"{fallback_provider}:{self._fallback_rotator.key_count} keys")
+            if self._fallback2_rotator:
+                keys_info.append(f"{fallback2_provider}:{self._fallback2_rotator.key_count} keys")
+            logger.info(f"LLM Judge: provider={provider}, model={model}, rotation=[{', '.join(keys_info)}]")
         else:
             logger.info("LLM Judge: using fuzzy fallback (no API key)")
+
+    def reset_keys(self):
+        """Reset exhausted API keys across all providers. Call between evaluations."""
+        for rotator in [self._primary_rotator, self._fallback_rotator, self._fallback2_rotator]:
+            if rotator:
+                rotator.reset_exhausted()
 
     def _provider_base_url(self, provider: str) -> str:
         """Get default base URL for a provider."""
@@ -402,8 +454,29 @@ class LLMJudge:
         except (json.JSONDecodeError, ValueError, TypeError):
             return None
 
+    async def _try_provider_with_rotation(
+        self, question: str, expected: str, answer: str,
+        rotator: _KeyRotator, model: str, provider: str, base_url: str,
+    ) -> Optional[JudgeResult]:
+        """Try a provider with key rotation on rate limit."""
+        attempts = rotator.key_count
+        for i in range(attempts):
+            key = rotator.current
+            if not key:
+                break
+            result = await self._call_llm(
+                question, expected, answer,
+                key, model, provider, base_url,
+            )
+            if result is not None:
+                return result
+            # _call_llm returned None — likely 429 or quota error, rotate key
+            logger.info(f"Key rotation: {provider} key #{i+1}/{attempts} failed, rotating")
+            rotator.rotate(exhausted=True)
+        return None
+
     async def ajudge(self, question: str, expected: str, answer: str) -> JudgeResult:
-        """Judge a response asynchronously. Primary → fallback → fuzzy."""
+        """Judge a response asynchronously. Primary → fallback → fuzzy with key rotation."""
         key = self._cache_key(question, expected, answer)
         cached = self._get_cached(key)
         if cached is not None:
@@ -411,22 +484,22 @@ class LLMJudge:
 
         start = time.time()
 
-        # Try primary provider
-        if self._llm_available:
-            result = await self._call_llm(
+        # Try primary provider (with key rotation)
+        if self._primary_rotator and self._primary_rotator.current:
+            result = await self._try_provider_with_rotation(
                 question, expected, answer,
-                self.api_key, self.model, self.provider, self.base_url,
+                self._primary_rotator, self.model, self.provider, self.base_url,
             )
             if result is not None:
                 result.latency_ms = int((time.time() - start) * 1000)
                 self._store_cache(key, result)
                 return result
 
-        # Try fallback provider
-        if self.fallback_key:
-            result = await self._call_llm(
+        # Try fallback provider (with key rotation)
+        if self._fallback_rotator and self._fallback_rotator.current:
+            result = await self._try_provider_with_rotation(
                 question, expected, answer,
-                self.fallback_key, self.fallback_model, self.fallback_provider,
+                self._fallback_rotator, self.fallback_model, self.fallback_provider,
                 self._provider_base_url(self.fallback_provider),
             )
             if result is not None:
@@ -434,11 +507,11 @@ class LLMJudge:
                 self._store_cache(key, result)
                 return result
 
-        # Try fallback2 provider
-        if self.fallback2_key:
-            result = await self._call_llm(
+        # Try fallback2 provider (with key rotation)
+        if self._fallback2_rotator and self._fallback2_rotator.current:
+            result = await self._try_provider_with_rotation(
                 question, expected, answer,
-                self.fallback2_key, self.fallback2_model, self.fallback2_provider,
+                self._fallback2_rotator, self.fallback2_model, self.fallback2_provider,
                 self._provider_base_url(self.fallback2_provider),
             )
             if result is not None:
@@ -493,10 +566,13 @@ class LLMJudge:
                         continue
                     break
                 else:
-                    # All retries exhausted with 429 — sustained backoff
+                    # All retries exhausted with 429 — mark rate limited and move on
                     if response.status_code == 429:
-                        logger.warning(f"{provider} API returned 429 after {MAX_RETRIES} retries")
-                        await rate_limiter.backoff(60.0)
+                        logger.warning(f"{provider} API returned 429 after {MAX_RETRIES} retries — skipping to next provider")
+                        # Bump the rate limiter's last_call forward so next attempt waits,
+                        # but don't block the current coroutine with a long sleep.
+                        async with rate_limiter._lock:
+                            rate_limiter._last_call = time.time() + 15
                         return None
 
                 if response.status_code != 200:

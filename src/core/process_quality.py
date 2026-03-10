@@ -6,7 +6,7 @@ Evaluates HOW a server handles the evaluation process, not just correctness:
 - Input validation quality: proper rejection of bad types/edge cases
 - Response structure quality: consistent JSON format, parsable output
 
-This is what differentiates Quality Oracle from simple accuracy benchmarks.
+This is what differentiates AgentTrust from simple accuracy benchmarks.
 Industry context: Agent-as-a-Judge pattern — measuring process, not just outcome.
 """
 import json

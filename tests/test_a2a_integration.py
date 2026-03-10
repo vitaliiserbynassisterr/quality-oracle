@@ -64,7 +64,7 @@ class TestDIDDocument:
     def test_structure(self):
         key = Ed25519PrivateKey.generate()
         did_doc = build_did_document(key.public_key())
-        assert did_doc["id"] == "did:web:quality-oracle.assisterr.ai"
+        assert did_doc["id"] == "did:web:agenttrust.assisterr.ai"
         assert "@context" in did_doc
         assert len(did_doc["verificationMethod"]) == 1
         vm = did_doc["verificationMethod"][0]
@@ -111,7 +111,7 @@ class TestVCEndpoint:
         assert resp.status_code == 200
         vc = resp.json()
         assert "VerifiableCredential" in vc["type"]
-        assert "QualityAttestation" in vc["type"]
+        assert "AgentQualityCredential" in vc["type"]
         assert vc["proof"]["cryptosuite"] == "eddsa-jcs-2022"
 
     def test_404_on_missing_attestation(self, test_client):
@@ -139,7 +139,7 @@ class TestVCEndpoint:
 
 class TestVCIssuanceVerification:
 
-    def _make_uaqa(self, score=85, tier="expert"):
+    def _make_aqvc(self, score=85, tier="expert"):
         return {
             "quality": {"score": score, "tier": tier, "confidence": 0.9,
                         "evaluation_level": 2, "domains": ["defi"], "questions_asked": 10},
@@ -151,10 +151,10 @@ class TestVCIssuanceVerification:
 
     def test_create_verify_roundtrip(self):
         key = Ed25519PrivateKey.generate()
-        vc = create_vc(self._make_uaqa(), key)
+        vc = create_vc(self._make_aqvc(), key)
 
-        assert vc["type"] == ["VerifiableCredential", "QualityAttestation"]
-        assert vc["issuer"] == "did:web:quality-oracle.assisterr.ai"
+        assert vc["type"] == ["VerifiableCredential", "AgentQualityCredential"]
+        assert vc["issuer"] == "did:web:agenttrust.assisterr.ai"
         assert vc["proof"]["cryptosuite"] == "eddsa-jcs-2022"
         assert vc["proof"]["proofValue"].startswith("z")
 
@@ -164,7 +164,7 @@ class TestVCIssuanceVerification:
 
     def test_tampered_vc_fails(self):
         key = Ed25519PrivateKey.generate()
-        vc = create_vc(self._make_uaqa(), key)
+        vc = create_vc(self._make_aqvc(), key)
 
         tampered = copy.deepcopy(vc)
         tampered["credentialSubject"]["qualityScore"] = 99
@@ -176,7 +176,7 @@ class TestVCIssuanceVerification:
     def test_wrong_key_fails(self):
         key1 = Ed25519PrivateKey.generate()
         key2 = Ed25519PrivateKey.generate()
-        vc = create_vc(self._make_uaqa(), key1)
+        vc = create_vc(self._make_aqvc(), key1)
 
         valid, err = verify_vc(vc, key2.public_key())
         assert not valid
@@ -184,7 +184,7 @@ class TestVCIssuanceVerification:
 
     def test_no_proof_fails(self):
         key = Ed25519PrivateKey.generate()
-        vc = create_vc(self._make_uaqa(), key)
+        vc = create_vc(self._make_aqvc(), key)
         del vc["proof"]
 
         valid, err = verify_vc(vc, key.public_key())
@@ -193,7 +193,7 @@ class TestVCIssuanceVerification:
 
     def test_vc_credential_subject_fields(self):
         key = Ed25519PrivateKey.generate()
-        vc = create_vc(self._make_uaqa(score=82, tier="proficient"), key)
+        vc = create_vc(self._make_aqvc(score=82, tier="proficient"), key)
 
         cs = vc["credentialSubject"]
         assert cs["qualityScore"] == 82
@@ -205,7 +205,7 @@ class TestVCIssuanceVerification:
 
     def test_vc_evidence(self):
         key = Ed25519PrivateKey.generate()
-        vc = create_vc(self._make_uaqa(), key)
+        vc = create_vc(self._make_aqvc(), key)
 
         assert len(vc["evidence"]) == 1
         ev = vc["evidence"][0]
@@ -215,7 +215,7 @@ class TestVCIssuanceVerification:
 
     def test_custom_issuer_did(self):
         key = Ed25519PrivateKey.generate()
-        vc = create_vc(self._make_uaqa(), key, issuer_did="did:web:custom.example.com")
+        vc = create_vc(self._make_aqvc(), key, issuer_did="did:web:custom.example.com")
         assert vc["issuer"] == "did:web:custom.example.com"
         assert "did:web:custom.example.com#key-1" in vc["proof"]["verificationMethod"]
 
@@ -228,7 +228,7 @@ class TestContextEndpoint:
         resp = test_client.get("/contexts/quality/v1")
         assert resp.status_code == 200
         ctx = resp.json()["@context"]
-        for term in ["QualityAttestation", "qualityScore", "qualityTier",
+        for term in ["AgentQualityCredential", "qualityScore", "qualityTier",
                       "confidence", "evaluationLevel", "domains", "questionsAsked"]:
             assert term in ctx, f"Missing vocabulary term: {term}"
 

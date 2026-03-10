@@ -1,9 +1,9 @@
 """
-Quality Oracle MCP Server — standalone package.
+AgentTrust MCP Server — standalone package.
 
 Exposes quality evaluation tools via MCP protocol.
-Install: pip install mcp-quality-oracle
-Run: python -m mcp_quality_oracle
+Install: pip install mcp-agenttrust
+Run: python -m mcp_agenttrust
 """
 # TODO: Implement in Week 2-3
 # This will be a standalone FastMCP server published to PyPI
@@ -12,4 +12,4 @@ Run: python -m mcp_quality_oracle
 # - find_best(domain, min_score) -> ranked list
 # - verify_attestation(attestation_id) -> validity
 
-print("Quality Oracle MCP Server — coming in Week 2")
+print("AgentTrust MCP Server — coming in Week 2")

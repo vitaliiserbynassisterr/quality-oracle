@@ -1,4 +1,4 @@
-"""Quality Oracle - Active competency verification for AI agents and MCP servers."""
+"""AgentTrust - Active competency verification for AI agents and MCP servers."""
 import logging
 from contextlib import asynccontextmanager
 
@@ -14,6 +14,7 @@ from src.api.v1.attestations import router as attestations_router
 from src.api.v1.enrichment import router as enrichment_router
 from src.api.v1.feedback import router as feedback_router
 from src.api.v1.payments import router as payments_router
+from src.api.v1.battles import router as battles_router
 from src.api.agent_card import router as agent_card_router
 from src.storage.mongodb import connect_db, close_db
 from src.storage.cache import connect_redis, close_redis
@@ -27,18 +28,18 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting Quality Oracle...")
+    logger.info("Starting AgentTrust...")
     await connect_db()
     await connect_redis()
-    logger.info(f"Quality Oracle running on port {settings.port}")
+    logger.info(f"AgentTrust running on port {settings.port}")
     yield
-    logger.info("Shutting down Quality Oracle...")
+    logger.info("Shutting down AgentTrust...")
     await close_db()
     await close_redis()
 
 
 app = FastAPI(
-    title="Quality Oracle",
+    title="AgentTrust",
     description="Active competency verification for AI agents, MCP servers, and skills.",
     version="0.1.0",
     lifespan=lifespan,
@@ -61,6 +62,7 @@ app.include_router(attestations_router, prefix="/v1", tags=["attestations"])
 app.include_router(enrichment_router, prefix="/v1", tags=["enrichment"])
 app.include_router(feedback_router, prefix="/v1", tags=["feedback"])
 app.include_router(payments_router, prefix="/v1", tags=["payments"])
+app.include_router(battles_router, prefix="/v1", tags=["battles"])
 app.include_router(agent_card_router, tags=["a2a"])
 
 

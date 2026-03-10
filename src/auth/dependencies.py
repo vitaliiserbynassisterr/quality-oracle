@@ -1,4 +1,4 @@
-"""FastAPI auth dependencies for Quality Oracle endpoints."""
+"""FastAPI auth dependencies for AgentTrust endpoints."""
 from fastapi import Header, HTTPException
 
 from src.auth.api_keys import validate_api_key

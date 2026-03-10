@@ -10,6 +10,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Dict, List, Optional, Tuple
 
+import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.types import TextContent
@@ -37,6 +38,10 @@ async def _connect(url: str, transport: str = "auto") -> AsyncGenerator[Tuple[st
     """Connect to an MCP server with transport auto-detection and fallback.
 
     Yields (transport_used, session) tuple.
+
+    If the primary transport connects and the caller's work completes, cleanup
+    errors (e.g. TaskGroup teardown) are suppressed — the caller already got
+    its data. Fallback only triggers when the *connection itself* fails.
     """
     if transport == "auto":
         transport = _detect_transport(url)
@@ -50,6 +55,7 @@ async def _connect(url: str, transport: str = "auto") -> AsyncGenerator[Tuple[st
 
     last_error = None
     for t in transports_to_try:
+        yielded = False
         try:
             if t == "sse":
                 async with sse_client(
@@ -58,6 +64,7 @@ async def _connect(url: str, transport: str = "auto") -> AsyncGenerator[Tuple[st
                     sse_read_timeout=SSE_READ_TIMEOUT,
                 ) as (read, write):
                     async with ClientSession(read, write) as session:
+                        yielded = True
                         yield t, session
                         return
             else:
@@ -69,12 +76,18 @@ async def _connect(url: str, transport: str = "auto") -> AsyncGenerator[Tuple[st
                     sse_read_timeout=SSE_READ_TIMEOUT,
                 ) as (read, write, _get_session_id):
                     async with ClientSession(read, write) as session:
+                        yielded = True
                         yield t, session
                         return
         except Exception as e:
+            if yielded:
+                # Caller already got its data — this is a cleanup error.
+                # Suppress it instead of falling through to a doomed fallback.
+                logger.debug(f"Transport {t} cleanup error for {url} (suppressed): {e}")
+                return
             last_error = e
             if len(transports_to_try) > 1 and t == transports_to_try[0]:
-                logger.info(f"Transport {t} failed for {url}, trying fallback: {e}")
+                logger.info(f"Transport {t} failed to connect to {url}, trying fallback: {e}")
                 continue
             raise
 
@@ -115,12 +128,13 @@ async def _call_tool_in_session(
     tool_name: str,
     arguments: dict,
     start: float,
+    timeout: int = TOOL_CALL_TIMEOUT,
 ) -> dict:
     """Call a tool within an existing session. Handles timeout and errors."""
     try:
         result = await asyncio.wait_for(
             session.call_tool(tool_name, arguments),
-            timeout=TOOL_CALL_TIMEOUT,
+            timeout=timeout,
         )
         latency_ms = int((time.time() - start) * 1000)
 
@@ -139,9 +153,9 @@ async def _call_tool_in_session(
         }
     except asyncio.TimeoutError:
         latency_ms = int((time.time() - start) * 1000)
-        logger.warning(f"Tool call {tool_name} timed out after {TOOL_CALL_TIMEOUT}s")
+        logger.warning(f"Tool call {tool_name} timed out after {timeout}s")
         return {
-            "content": f"Tool call timed out after {TOOL_CALL_TIMEOUT}s",
+            "content": f"Tool call timed out after {timeout}s",
             "is_error": True,
             "latency_ms": latency_ms,
         }
@@ -155,6 +169,30 @@ async def _call_tool_in_session(
         }
 
 
+async def call_tools_batch(
+    server_url: str,
+    calls: List[Dict[str, dict]],
+    per_call_timeout: int = TOOL_CALL_TIMEOUT,
+) -> List[dict]:
+    """Call multiple tools on an MCP server reusing a single session.
+
+    Each entry in `calls` should have keys "tool_name" and "arguments".
+    Returns a list of result dicts in the same order.
+    """
+    logger.info(f"Batch calling {len(calls)} tools on {server_url} (timeout={per_call_timeout}s each)")
+    results = []
+    async with _connect(server_url) as (_, session):
+        await session.initialize()
+        for call in calls:
+            start = time.time()
+            r = await _call_tool_in_session(
+                session, call["tool_name"], call["arguments"], start,
+                timeout=per_call_timeout,
+            )
+            results.append(r)
+    return results
+
+
 async def get_server_manifest(server_url: str) -> dict:
     """
     Get the server manifest (name, version, description, tools).
@@ -162,6 +200,33 @@ async def get_server_manifest(server_url: str) -> dict:
     Raises ConnectionError if the server cannot be reached.
     """
     logger.info(f"Fetching manifest from {server_url}")
+
+    # Pre-flight check: detect HTTP/DNS errors before MCP protocol handshake
+    transport_hint = _detect_transport(server_url)
+    try:
+        async with httpx.AsyncClient(timeout=CONNECT_TIMEOUT) as http:
+            if transport_hint == "sse":
+                # SSE endpoints use GET — just do a HEAD to verify reachability
+                preflight = await http.head(server_url)
+            else:
+                preflight = await http.post(
+                    server_url,
+                    json={"jsonrpc": "2.0", "method": "initialize", "id": 0, "params": {}},
+                    headers={"Accept": "application/json, text/event-stream"},
+                )
+            if preflight.status_code in (401, 403):
+                raise ConnectionError(f"MCP server requires authentication ({preflight.status_code}): {server_url}")
+            if preflight.status_code == 404:
+                raise ConnectionError(f"MCP endpoint not found (404): {server_url}")
+            if preflight.status_code >= 500:
+                raise ConnectionError(f"MCP server error ({preflight.status_code}): {server_url}")
+    except ConnectionError:
+        raise
+    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+        raise ConnectionError(f"Cannot reach MCP server (DNS/network error): {server_url}") from e
+    except Exception as e:
+        logger.debug(f"Pre-flight check for {server_url} inconclusive: {e}")
+
     try:
         async with _connect(server_url) as (transport_used, session):
             init_result = await session.initialize()
@@ -190,8 +255,13 @@ async def get_server_manifest(server_url: str) -> dict:
             )
             return manifest
     except Exception as e:
-        logger.error(f"Failed to connect to {server_url}: {e}")
-        raise ConnectionError(f"Cannot connect to MCP server at {server_url}: {e}") from e
+        # Try to extract HTTP status from the exception chain
+        error_str = str(e)
+        cause = e.__cause__ or e.__context__
+        cause_str = str(cause) if cause else ""
+        full_error = f"{error_str} {cause_str}".strip()
+        logger.error(f"Failed to connect to {server_url}: {full_error}")
+        raise ConnectionError(f"Cannot connect to MCP server at {server_url}: {full_error}") from e
 
 
 async def check_response_consistency(
@@ -271,6 +341,8 @@ async def check_response_consistency(
 async def evaluate_server_streaming(
     server_url: str,
     cancel: Optional["CancellationToken"] = None,
+    test_types: Optional[set] = None,
+    max_tools: Optional[int] = None,
 ) -> AsyncGenerator[Tuple[str, dict, dict], None]:
     """Stream tool call results as they complete.
 
@@ -280,6 +352,8 @@ async def evaluate_server_streaming(
     Args:
         server_url: MCP server URL
         cancel: Optional CancellationToken for early termination
+        test_types: If provided, only run these test types
+        max_tools: If provided, limit to first N tools
     """
     from src.core.test_generator import generate_test_cases
 
@@ -299,7 +373,7 @@ async def evaluate_server_streaming(
             for t in tools_result.tools
         ]
 
-        test_cases = generate_test_cases(tools)
+        test_cases = generate_test_cases(tools, test_types=test_types, max_tools=max_tools)
 
         for tool_name, cases in test_cases.items():
             for case in cases:
@@ -313,7 +387,11 @@ async def evaluate_server_streaming(
                 yield tool_name, case, response
 
 
-async def evaluate_server(server_url: str) -> Dict[str, List[dict]]:
+async def evaluate_server(
+    server_url: str,
+    test_types: Optional[set] = None,
+    max_tools: Optional[int] = None,
+) -> Dict[str, List[dict]]:
     """
     Full evaluation flow:
     1. Connect to server (auto-detect transport)
@@ -321,6 +399,11 @@ async def evaluate_server(server_url: str) -> Dict[str, List[dict]]:
     3. Generate test cases per tool
     4. Call each tool with test inputs
     5. Return responses for judging
+
+    Args:
+        server_url: MCP server URL
+        test_types: If provided, only run these test types
+        max_tools: If provided, limit to first N tools
 
     Returns dict of tool_name -> list of {question, expected, answer, latency_ms, is_error}
     """
@@ -343,7 +426,7 @@ async def evaluate_server(server_url: str) -> Dict[str, List[dict]]:
             })
 
         # Generate test cases
-        test_cases = generate_test_cases(tools)
+        test_cases = generate_test_cases(tools, test_types=test_types, max_tools=max_tools)
 
         # Execute each test case
         results: Dict[str, List[dict]] = {}

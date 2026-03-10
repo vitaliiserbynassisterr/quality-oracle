@@ -24,6 +24,9 @@ rfc8785>=0.1.2
 # Async Job Queue (eval jobs, migrate from BackgroundTasks at ~100 evals/day)
 arq==0.26.1
 
+# Rating System (Battle Arena)
+openskill==6.1.0
+
 # Utils
 python-dotenv==1.0.1
 python-multipart==0.0.20

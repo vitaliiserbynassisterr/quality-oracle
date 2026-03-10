@@ -37,7 +37,7 @@ def test_provider_extension_capabilities():
     assert params["evaluation_levels"] == [1, 2, 3]
     assert "mcp_server" in params["supported_targets"]
     assert "agent" in params["supported_targets"]
-    assert "UAQA" in params["attestation_format"]
+    assert "AQVC" in params["attestation_format"]
 
 
 # ── Consumer Extension ───────────────────────────────────────────────────────
@@ -104,7 +104,7 @@ async def test_agent_card_v03_format():
     card = await agent_card()
 
     # Required top-level fields
-    assert card["name"] == "Quality Oracle"
+    assert card["name"] == "AgentTrust"
     assert "url" in card
     assert "version" in card
     assert "provider" in card
@@ -143,7 +143,7 @@ async def test_extension_spec_endpoint():
     spec = await extension_spec()
 
     assert "@context" in spec
-    assert spec["name"] == "Quality Oracle Evaluation Extension"
+    assert spec["name"] == "AgentTrust Evaluation Extension"
     assert "provider" in spec["roles"]
     assert "verified_subject" in spec["roles"]
     assert "params_schema" in spec

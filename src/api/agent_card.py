@@ -1,4 +1,4 @@
-"""A2A Agent Card — Quality Oracle as a discoverable A2A agent (v0.3 spec)."""
+"""A2A Agent Card — AgentTrust as a discoverable A2A agent (v0.3 spec)."""
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
@@ -10,17 +10,17 @@ router = APIRouter()
 @router.get("/.well-known/agent.json")
 async def agent_card():
     """
-    A2A v0.3-compliant Agent Card for Quality Oracle.
+    A2A v0.3-compliant Agent Card for AgentTrust.
 
-    Quality Oracle IS an A2A agent that can be discovered and interacted with
+    AgentTrust IS an A2A agent that can be discovered and interacted with
     by other agents using the Google A2A protocol.
     """
     return {
-        "name": "Quality Oracle",
+        "name": "AgentTrust",
         "description": "Active competency verification for AI agents, MCP servers, and skills. "
                        "Submit any agent or MCP server for quality evaluation and receive "
-                       "a verifiable quality score with W3C VC attestation.",
-        "url": "https://quality-oracle.assisterr.ai",
+                       "a verifiable quality score with AQVC (W3C VC) attestation.",
+        "url": "https://agenttrust.assisterr.ai",
         "version": "0.1.0",
         "protocolVersion": "0.3.0",
         "provider": {
@@ -40,7 +40,7 @@ async def agent_card():
                 "name": "Evaluate Agent/MCP Server Quality",
                 "description": "Submit an MCP server URL or agent endpoint for quality evaluation. "
                                "Returns a quality score (0-100), tier (expert/proficient/basic/failed), "
-                               "and W3C Verifiable Credential attestation.",
+                               "and AQVC (W3C Verifiable Credential) attestation.",
                 "tags": ["quality", "evaluation", "verification", "mcp", "agent"],
                 "examples": [
                     "Evaluate the quality of mcp-server-github",
@@ -77,7 +77,7 @@ async def did_document():
     """DID Document endpoint for W3C VC verification.
 
     Returns the DID Document with Multikey verification method,
-    allowing anyone to verify Quality Oracle's VCs offline.
+    allowing anyone to verify AgentTrust's VCs offline.
     """
     from src.core.attestation import _get_or_generate_key
     from src.standards.vc_issuer import build_did_document
@@ -89,37 +89,37 @@ async def did_document():
 
 @router.get("/contexts/quality/v1")
 async def quality_context():
-    """Custom JSON-LD context defining QualityAttestation vocabulary.
+    """Custom JSON-LD context defining AgentQualityCredential vocabulary.
 
-    Provides term definitions for the Quality Oracle VC credentialSubject fields.
+    Provides term definitions for the AgentTrust VC credentialSubject fields.
     """
     return JSONResponse(content={
         "@context": {
             "@version": 1.1,
-            "qo": "https://quality-oracle.assisterr.ai/vocab#",
-            "QualityAttestation": "qo:QualityAttestation",
-            "QualityEvaluation": "qo:QualityEvaluation",
-            "qualityScore": {"@id": "qo:qualityScore", "@type": "https://www.w3.org/2001/XMLSchema#integer"},
-            "qualityTier": {"@id": "qo:qualityTier", "@type": "https://www.w3.org/2001/XMLSchema#string"},
-            "confidence": {"@id": "qo:confidence", "@type": "https://www.w3.org/2001/XMLSchema#float"},
-            "evaluationLevel": {"@id": "qo:evaluationLevel", "@type": "https://www.w3.org/2001/XMLSchema#integer"},
-            "domains": {"@id": "qo:domains", "@container": "@set"},
-            "questionsAsked": {"@id": "qo:questionsAsked", "@type": "https://www.w3.org/2001/XMLSchema#integer"},
-            "evaluationId": {"@id": "qo:evaluationId", "@type": "https://www.w3.org/2001/XMLSchema#string"},
-            "evaluatedAt": {"@id": "qo:evaluatedAt", "@type": "https://www.w3.org/2001/XMLSchema#dateTime"},
+            "at": "https://agenttrust.assisterr.ai/vocab#",
+            "AgentQualityCredential": "at:AgentQualityCredential",
+            "QualityEvaluation": "at:QualityEvaluation",
+            "qualityScore": {"@id": "at:qualityScore", "@type": "https://www.w3.org/2001/XMLSchema#integer"},
+            "qualityTier": {"@id": "at:qualityTier", "@type": "https://www.w3.org/2001/XMLSchema#string"},
+            "confidence": {"@id": "at:confidence", "@type": "https://www.w3.org/2001/XMLSchema#float"},
+            "evaluationLevel": {"@id": "at:evaluationLevel", "@type": "https://www.w3.org/2001/XMLSchema#integer"},
+            "domains": {"@id": "at:domains", "@container": "@set"},
+            "questionsAsked": {"@id": "at:questionsAsked", "@type": "https://www.w3.org/2001/XMLSchema#integer"},
+            "evaluationId": {"@id": "at:evaluationId", "@type": "https://www.w3.org/2001/XMLSchema#string"},
+            "evaluatedAt": {"@id": "at:evaluatedAt", "@type": "https://www.w3.org/2001/XMLSchema#dateTime"},
         },
     }, media_type="application/ld+json")
 
 
 @router.get("/ext/evaluation/v1")
 async def extension_spec():
-    """Extension specification document for Quality Oracle evaluation.
+    """Extension specification document for AgentTrust evaluation.
 
     Returns the JSON-LD-style schema describing the extension's roles and parameters.
     """
     return {
-        "@context": "https://quality-oracle.assisterr.ai/ext/evaluation/v1",
-        "name": "Quality Oracle Evaluation Extension",
+        "@context": "https://agenttrust.assisterr.ai/ext/evaluation/v1",
+        "name": "AgentTrust Evaluation Extension",
         "version": "1.0",
         "roles": ["provider", "verified_subject"],
         "params_schema": {

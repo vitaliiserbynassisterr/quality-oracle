@@ -25,7 +25,7 @@ async def get_attestation(
     return {
         "attestation_id": attestation_id,
         "attestation_jwt": doc.get("attestation_jwt"),
-        "uaqa_payload": doc.get("uaqa_payload"),
+        "aqvc_payload": doc.get("aqvc_payload"),
         "evaluation_version": doc.get("evaluation_version"),
         "issued_at": doc.get("issued_at"),
         "expires_at": doc.get("expires_at"),
@@ -63,10 +63,10 @@ async def verify_attestation_endpoint(
     result = verify_jwt(token)
 
     # Enrich with DB info
-    uaqa = doc.get("uaqa_payload", {})
-    result["target_id"] = uaqa.get("subject", {}).get("id", "")
-    result["quality_score"] = uaqa.get("quality", {}).get("score", 0)
-    result["tier"] = uaqa.get("quality", {}).get("tier", "")
+    aqvc = doc.get("aqvc_payload", {})
+    result["target_id"] = aqvc.get("subject", {}).get("id", "")
+    result["quality_score"] = aqvc.get("quality", {}).get("score", 0)
+    result["tier"] = aqvc.get("quality", {}).get("tier", "")
 
     await cache_attestation_verify(attestation_id, result)
     return result

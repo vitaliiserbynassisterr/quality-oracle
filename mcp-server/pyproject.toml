@@ -3,9 +3,9 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mcp-quality-oracle"
+name = "mcp-agenttrust"
 version = "0.1.0"
-description = "Quality Oracle MCP Server — verify AI agent and MCP server quality from your IDE"
+description = "AgentTrust MCP Server — verify AI agent and MCP server quality from your IDE"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -18,4 +18,4 @@ dependencies = [
 ]
 
 [project.scripts]
-mcp-quality-oracle = "server:main"
+mcp-agenttrust = "server:main"

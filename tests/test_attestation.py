@@ -36,9 +36,9 @@ def test_create_attestation():
 
     assert "_id" in result
     assert result["attestation_jwt"]
-    assert result["uaqa_payload"]["quality"]["score"] == 85
-    assert result["uaqa_payload"]["quality"]["tier"] == "expert"
-    assert result["uaqa_payload"]["subject"]["id"] == "http://test-server/sse"
+    assert result["aqvc_payload"]["quality"]["score"] == 85
+    assert result["aqvc_payload"]["quality"]["tier"] == "expert"
+    assert result["aqvc_payload"]["subject"]["id"] == "http://test-server/sse"
     assert result["revoked"] is False
 
 
@@ -54,7 +54,7 @@ def test_verify_attestation_valid():
     result = verify_attestation(att["attestation_jwt"])
     assert result["valid"] is True
     assert result["payload"]["quality"]["score"] == 75
-    assert result["issuer"] == "did:web:quality-oracle.assisterr.ai"
+    assert result["issuer"] == "did:web:agenttrust.assisterr.ai"
 
 
 def test_verify_attestation_invalid_token():
@@ -86,17 +86,17 @@ def test_get_public_key_pem():
     assert "END PUBLIC KEY" in pem
 
 
-def test_attestation_uaqa_payload_structure():
-    """UAQA payload should have all required fields."""
+def test_attestation_aqvc_payload_structure():
+    """AQVC payload should have all required fields."""
     att = create_attestation(
         target_id="http://server/sse",
         target_type="agent",
         target_name="Agent X",
         evaluation_result={"overall_score": 60, "tier": "basic", "confidence": 0.5},
     )
-    payload = att["uaqa_payload"]
+    payload = att["aqvc_payload"]
 
-    assert payload["uaqa_version"] == "1.0"
+    assert payload["aqvc_version"] == "1.0"
     assert "issuer" in payload
     assert "issued_at" in payload
     assert "expires_at" in payload

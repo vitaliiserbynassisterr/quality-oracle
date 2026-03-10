@@ -150,6 +150,13 @@ class ConsensusJudge:
     def is_consensus_possible(self) -> bool:
         return self.judges_available >= self._min_judges
 
+    def reset_keys(self):
+        """Reset all exhausted API keys across judges. Call between evaluations."""
+        for j in self._judges:
+            for rotator in [j._primary_rotator, j._fallback_rotator, j._fallback2_rotator]:
+                if rotator:
+                    rotator.reset_exhausted()
+
     async def ajudge(self, question: str, expected: str, answer: str) -> JudgeResult:
         """Judge with consensus. Returns JudgeResult for backward compatibility."""
         result = await self.ajudge_consensus(question, expected, answer)

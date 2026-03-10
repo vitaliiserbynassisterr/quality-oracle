@@ -1,4 +1,4 @@
-"""Endpoint tests for Quality Oracle API."""
+"""Endpoint tests for AgentTrust API."""
 from unittest.mock import AsyncMock, patch
 
 
@@ -16,7 +16,7 @@ def test_agent_card_no_auth(test_client):
     resp = test_client.get("/.well-known/agent.json")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["name"] == "Quality Oracle"
+    assert data["name"] == "AgentTrust"
     assert "skills" in data
     assert len(data["skills"]) >= 3
 

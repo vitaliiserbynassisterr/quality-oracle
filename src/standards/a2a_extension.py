@@ -1,27 +1,27 @@
-"""A2A v0.3 Extension for Quality Oracle evaluation.
+"""A2A v0.3 Extension for AgentTrust evaluation.
 
-Defines the Quality Oracle extension URI and builders for both
-provider (Quality Oracle's own card) and consumer (evaluated agent's card)
+Defines the AgentTrust extension URI and builders for both
+provider (AgentTrust's own card) and consumer (evaluated agent's card)
 per A2A v0.3 capabilities.extensions[] spec.
 """
 
-EXTENSION_URI = "https://quality-oracle.assisterr.ai/ext/evaluation/v1"
+EXTENSION_URI = "https://agenttrust.assisterr.ai/ext/evaluation/v1"
 
 
 def build_provider_extension_declaration() -> dict:
-    """Extension declaration for Quality Oracle's own Agent Card.
+    """Extension declaration for AgentTrust's own Agent Card.
 
     Returns an A2A v0.3 extension object with uri, description, required, params.
     """
     return {
         "uri": EXTENSION_URI,
-        "description": "Quality Oracle evaluation extension. Provides quality scores, tiers, and W3C VC attestations.",
+        "description": "AgentTrust evaluation extension. Provides quality scores, tiers, and AQVC (W3C VC) attestations.",
         "required": False,
         "params": {
             "role": "provider",
             "evaluation_levels": [1, 2, 3],
             "supported_targets": ["mcp_server", "agent", "skill"],
-            "attestation_format": "W3C Verifiable Credential (UAQA)",
+            "attestation_format": "W3C Verifiable Credential (AQVC)",
         },
     }
 
@@ -40,7 +40,7 @@ def build_consumer_extension_declaration(score_data: dict) -> dict:
 
     return {
         "uri": EXTENSION_URI,
-        "description": "Quality evaluation by Quality Oracle",
+        "description": "Quality evaluation by AgentTrust",
         "required": False,
         "params": {
             "role": "verified_subject",
