@@ -26,6 +26,18 @@ async def connect_db():
     await _db.quality__production_feedback.create_index("created_at")
     await _db.quality__payment_receipts.create_index("tx_signature", unique=True)
     await _db.quality__payment_receipts.create_index("created_at")
+    await _db.quality__response_fingerprints.create_index([("target_id", 1), ("question_hash", 1)])
+    await _db.quality__response_fingerprints.create_index("evaluation_id")
+    await _db.quality__paraphrase_log.create_index("evaluation_id")
+    await _db.quality__paraphrase_log.create_index("target_id")
+    # Battle arena collections
+    await _db.quality__battles.create_index("status")
+    await _db.quality__battles.create_index("created_at")
+    await _db.quality__battles.create_index([("agent_a.target_id", 1)])
+    await _db.quality__battles.create_index([("agent_b.target_id", 1)])
+    await _db.quality__battles.create_index("match_type")
+    await _db.quality__ladder.create_index([("domain", 1), ("position", 1)], unique=True)
+    await _db.quality__ladder.create_index("target_id")
     logger.info(f"Connected to MongoDB: {settings.mongodb_database}")
 
 
@@ -73,3 +85,19 @@ def feedback_col():
 
 def payment_receipts_col():
     return get_db().quality__payment_receipts
+
+
+def response_fingerprints_col():
+    return get_db().quality__response_fingerprints
+
+
+def paraphrase_log_col():
+    return get_db().quality__paraphrase_log
+
+
+def battles_col():
+    return get_db().quality__battles
+
+
+def ladder_col():
+    return get_db().quality__ladder

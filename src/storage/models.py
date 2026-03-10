@@ -40,9 +40,17 @@ class ConnectionStrategy(str, Enum):
 
 
 class EvalMode(str, Enum):
-    QUICK = "quick"
-    STANDARD = "standard"
-    FULL = "full"
+    VERIFIED = "verified"      # DV — spot check (~30s)
+    CERTIFIED = "certified"    # OV — full test suite (~90s)
+    AUDITED = "audited"        # EV — comprehensive audit (~3min)
+
+
+def normalize_eval_mode(raw: Optional[str]) -> Optional[str]:
+    """Map old eval_mode values (quick/standard/full) to new names."""
+    if raw is None:
+        return None
+    _COMPAT = {"quick": "verified", "standard": "certified", "full": "audited"}
+    return _COMPAT.get(raw, raw)
 
 
 # Request models
@@ -51,7 +59,7 @@ class EvaluateRequest(BaseModel):
     target_type: TargetType = TargetType.MCP_SERVER
     level: EvalLevel = EvalLevel.FUNCTIONAL
     domains: List[str] = []
-    eval_mode: EvalMode = EvalMode.STANDARD
+    eval_mode: EvalMode = EvalMode.CERTIFIED
     webhook_url: Optional[str] = None
     callback_secret: Optional[str] = None
 
@@ -83,6 +91,7 @@ class ScoreResponse(BaseModel):
     evaluation_version: Optional[str] = None
     last_evaluated_at: Optional[datetime] = None
     attestation_url: Optional[str] = None
+    last_eval_mode: Optional[str] = None
 
 
 class EvaluationStatus(BaseModel):
@@ -91,6 +100,7 @@ class EvaluationStatus(BaseModel):
     progress_pct: int = 0
     score: Optional[int] = None
     tier: Optional[str] = None
+    eval_mode: Optional[str] = None
     evaluation_version: Optional[str] = None
     report: Optional[Dict[str, Any]] = None
     scores: Optional[Dict[str, Any]] = None
@@ -99,6 +109,8 @@ class EvaluationStatus(BaseModel):
     result: Optional[ScoreResponse] = None
     error: Optional[str] = None
     duration_ms: Optional[int] = None  # wall-clock eval time
+    gaming_risk: Optional[str] = None  # none/low/medium/high
+    timing_anomaly: Optional[bool] = None
 
 
 # Webhook payload model
@@ -164,6 +176,7 @@ class ScoreDoc(BaseModel):
     last_evaluated_at: Optional[datetime] = None
     next_evaluation_at: Optional[datetime] = None
     badge_url: Optional[str] = None
+    last_eval_mode: Optional[str] = None
 
 
 class ScoreHistoryDoc(BaseModel):
@@ -223,3 +236,92 @@ class FeedbackDoc(BaseModel):
     details: Optional[str] = None
     submitted_by: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ── Battle Arena ─────────────────────────────────────────────────────────────
+
+class BattleStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class BattleRequest(BaseModel):
+    agent_a_url: str
+    agent_b_url: str
+    domain: Optional[str] = None
+    challenge_count: int = Field(default=5, ge=3, le=15)
+    eval_mode: EvalMode = EvalMode.VERIFIED
+    blind: bool = True  # hide agent identities from judge
+
+
+class BattleParticipant(BaseModel):
+    target_id: str
+    target_url: str
+    name: str = ""
+    eval_id: Optional[str] = None
+    scores: Dict[str, float] = {}  # 6-axis scores
+    overall_score: int = 0
+    rating_before: Optional[Dict[str, float]] = None  # {mu, sigma}
+    rating_after: Optional[Dict[str, float]] = None
+
+
+class QuestionResponse(BaseModel):
+    """Per-question response data for IRT calibration."""
+    question_id: str = ""
+    question_hash: str = ""
+    domain: str = ""
+    difficulty_tag: str = ""
+    agent_a_correct: bool = False
+    agent_b_correct: bool = False
+    agent_a_score: float = 0.0
+    agent_b_score: float = 0.0
+    agent_a_latency_ms: int = 0
+    agent_b_latency_ms: int = 0
+    battle_discrimination: float = 0.0  # how well this Q separates the agents
+
+
+class BattleResult(BaseModel):
+    battle_id: str
+    agent_a: BattleParticipant
+    agent_b: BattleParticipant
+    winner: Optional[str] = None  # "a", "b", or None (draw)
+    margin: int = 0
+    photo_finish: bool = False  # margin < 5
+    match_quality: float = 0.0
+    domain: Optional[str] = None
+    challenge_count: int = 5
+    eval_mode: str = "verified"
+    match_type: str = "manual"  # manual, ladder, swiss, queue
+    duration_ms: int = 0
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    completed_at: Optional[datetime] = None
+    status: BattleStatus = BattleStatus.PENDING
+    question_responses: List[QuestionResponse] = []
+    rating_deltas: Optional[Dict[str, Any]] = None  # {agent_a: {axes}, agent_b: {axes}}
+    error: Optional[str] = None
+
+
+class MatchPrediction(BaseModel):
+    agent_a_id: str
+    agent_b_id: str
+    win_probability_a: float = 0.5
+    win_probability_b: float = 0.5
+    match_quality: float = 0.0
+    recommendation: str = "unknown"  # good_match, one_sided, too_unbalanced
+
+
+class LadderEntry(BaseModel):
+    target_id: str
+    domain: Optional[str] = None
+    position: int = 0
+    target_url: str = ""
+    name: str = ""
+    overall_score: int = 0
+    openskill_mu: float = 25.0
+    openskill_sigma: float = 8.333
+    battle_record: Dict[str, int] = Field(default_factory=lambda: {"wins": 0, "losses": 0, "draws": 0})
+    last_challenge_at: Optional[datetime] = None
+    seeded_at: datetime = Field(default_factory=datetime.utcnow)
+    defenses: int = 0
