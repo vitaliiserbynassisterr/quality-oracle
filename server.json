@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.vitaliiserbynassisterr/agenttrust",
-  "description": "Challenge-response quality verification for AI agents and MCP servers. Evaluates competency across 6 dimensions (accuracy, safety, reliability, process quality, latency, schema quality), runs adversarial probes, and issues W3C Verifiable Credentials.",
+  "description": "Quality verification for AI agents and MCP servers. 6-axis scoring, adversarial probes.",
   "title": "AgentTrust",
   "version": "0.1.0",
   "websiteUrl": "https://github.com/vitaliiserbynassisterr/quality-oracle",
@@ -16,7 +16,7 @@
       "identifier": "mcp-agenttrust",
       "version": "0.1.0",
       "transport": {
-        "type": "sse"
+        "type": "stdio"
       },
       "environmentVariables": [
         {
