@@ -3,7 +3,7 @@
   "name": "io.github.assister-xyz/agenttrust",
   "description": "Quality verification for AI agents and MCP servers. 6-axis scoring, adversarial probes.",
   "title": "AgentTrust",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "websiteUrl": "https://github.com/assister-xyz/quality-oracle",
   "repository": {
     "url": "https://github.com/assister-xyz/quality-oracle",
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "mcp-agenttrust",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "transport": {
         "type": "stdio"
       },
