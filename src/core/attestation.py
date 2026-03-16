@@ -21,19 +21,33 @@ _private_key: Ed25519PrivateKey | None = None
 
 
 def _get_or_generate_key() -> Ed25519PrivateKey:
-    """Load Ed25519 private key from file, or generate and persist one.
+    """Load Ed25519 private key from env, file, or generate one.
 
     Priority:
-    1. If jwt_private_key_path is set, load from that path (or generate + save there)
-    2. Otherwise, use default path data/jwt_private_key.pem (generate + save if missing)
+    1. JWT_PRIVATE_KEY env var (base64-encoded PEM)
+    2. jwt_private_key_path file
+    3. Default path data/jwt_private_key.pem (generate + save if missing)
     """
+    import base64
+    import os
     from pathlib import Path
 
     global _private_key
     if _private_key is not None:
         return _private_key
 
-    # Determine key file path
+    # 1. Try loading from env variable (base64-encoded PEM)
+    key_b64 = os.environ.get("JWT_PRIVATE_KEY", "")
+    if key_b64:
+        try:
+            pem_bytes = base64.b64decode(key_b64)
+            _private_key = serialization.load_pem_private_key(pem_bytes, password=None)
+            logger.info("Loaded Ed25519 private key from JWT_PRIVATE_KEY env var")
+            return _private_key
+        except Exception as e:
+            logger.warning(f"Failed to load key from JWT_PRIVATE_KEY env var: {e}")
+
+    # 2. Determine key file path
     key_path = settings.jwt_private_key_path or "data/jwt_private_key.pem"
     key_file = Path(key_path)
 
