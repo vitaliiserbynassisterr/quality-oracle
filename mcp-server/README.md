@@ -1,5 +1,7 @@
 # mcp-agenttrust
 
+<!-- mcp-name: io.github.vitaliiserbynassisterr/agenttrust -->
+
 MCP server for AI agent and MCP server quality verification.
 
 Evaluate any MCP server's competency before trusting it with real tasks or payments. Uses challenge-response testing across 6 quality dimensions with LLM judge consensus.
