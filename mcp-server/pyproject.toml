@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "AgentTrust MCP Server — verify AI agent and MCP server quality from your IDE"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "Assisterr", email = "team@assisterr.ai"},
 ]
