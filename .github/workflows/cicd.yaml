@@ -1,0 +1,109 @@
+name: "Build and Deploy"
+
+on:
+  workflow_dispatch:  #  Run workflow manually
+    inputs:
+      env:
+        type: choice
+        description: 'Choose environment to deploy to.'
+        options:
+        - prod
+
+jobs:
+  release:
+    name: Build and Deploy
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_NAME: ${{ vars.IMAGE_NAME }}
+      ECR_REPO: ${{ vars.ECR_REPO }}
+      AWS_ECS_SERVICE_NAME: "launchpad-backend"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: AWS Login
+        id: login-aws
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: us-east-1
+
+      - name: AWS ECR login
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registry-type: private
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.ECR_REPO }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.env }}
+          cache-from: type=registry,ref=${{ env.ECR_REPO }}/${{ env.IMAGE_NAME }}:buildcache
+          cache-to: type=registry,ref=${{ env.ECR_REPO }}/${{ env.IMAGE_NAME }}:buildcache,mode=max
+
+      - name: Set ECS ROLE
+        id: set-ecs-role
+        run: |
+          if [[ "${{ github.event_name }}" == 'workflow_dispatch' && "${{ github.event.inputs.env }}" == 'prod' ]]; then
+            echo "AWS_ECS_ROLE=${{ vars.PROD_AWS_ECS_ROLE }}" >> $GITHUB_ENV
+            echo "AWS_ECS_NAME=${{ vars.PROD_AWS_ECS_CLUSTER_ARN }}" >> $GITHUB_ENV
+          elif [[ "${{ github.event_name }}" == 'workflow_dispatch' && "${{ github.event.inputs.env }}" == 'staging' ]]; then
+            echo "AWS_ECS_ROLE=${{ vars.DEV_AWS_ECS_ROLE }}" >> $GITHUB_ENV
+            echo "AWS_ECS_NAME=${{ vars.STAGING_AWS_ECS_CLUSTER_ARN }}" >> $GITHUB_ENV
+          elif [[ "${{ github.event_name }}" == 'workflow_dispatch' && "${{ github.event.inputs.env }}" == 'dev' ]]; then
+            echo "AWS_ECS_ROLE=${{ vars.DEV_AWS_ECS_ROLE }}" >> $GITHUB_ENV
+            echo "AWS_ECS_NAME=${{ vars.DEV_AWS_ECS_CLUSTER_ARN }}" >> $GITHUB_ENV
+          elif [[ "${{ github.event_name }}" == 'workflow_dispatch' && "${{ github.event.inputs.env }}" == 'qa' ]]; then
+            echo "AWS_ECS_ROLE=${{ vars.DEV_AWS_ECS_ROLE }}" >> $GITHUB_ENV
+            echo "AWS_ECS_NAME=${{ vars.QA_AWS_ECS_CLUSTER_ARN }}" >> $GITHUB_ENV
+          elif [[ "${{ github.event_name }}" == 'workflow_dispatch' && "${{ github.event.inputs.env }}" == 'preprod' ]]; then
+            echo "AWS_ECS_ROLE=${{ vars.PROD_AWS_ECS_ROLE }}" >> $GITHUB_ENV
+            echo "AWS_ECS_NAME=${{ vars.PREPROD_AWS_ECS_CLUSTER_ARN }}" >> $GITHUB_ENV
+          fi
+
+      - name: AWS ECS login
+        id: login-ecs
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_ACCESS_KEY_SECRET }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ECS_ROLE }}
+
+      - name: Force new image redeploy
+        id: force-redeploy
+        run: |
+          AWS_ECS_SERVICE="${{ github.event.inputs.env }}-${{ env.AWS_ECS_SERVICE_NAME }}"
+
+          # Update service
+          aws ecs update-service --cluster $AWS_ECS_NAME --region ${{ vars.AWS_REGION }} --service ${AWS_ECS_SERVICE} --force-new-deployment
+
+          # Check deployment status
+          sleep 60
+          aws ecs wait services-stable --cluster $AWS_ECS_NAME --region ${{ vars.AWS_REGION }} --service ${AWS_ECS_SERVICE}
+
+      - name: Success notification
+        uses: rtCamp/action-slack-notify@v2
+        if: success()
+        env:
+          SLACK_ICON_EMOJI: ":rocket:"
+          SLACK_TITLE: "Status"
+          SLACK_MESSAGE: "*[${{ env.AWS_ECS_SERVICE_NAME }}]* Succesful deploy to *${{ github.event.inputs.env }}*"
+          SLACK_USERNAME: "Deploy Success"
+          SLACK_CHANNEL: "#deploy-notifications"
+          SLACK_WEBHOOK: "${{ secrets.SLACK_WEBHOOK_URL }}"
+
+      - name: Failure notification
+        uses: rtCamp/action-slack-notify@v2
+        if: failure()
+        env:
+          SLACK_ICON_EMOJI: ":exclamation:"
+          SLACK_TITLE: "Status"
+          SLACK_MESSAGE: "*[${{ env.AWS_ECS_SERVICE_NAME }}]* Failed deploy to *${{ github.event.inputs.env }}*. Use *Actions URL* to check the logs"
+          SLACK_USERNAME: "Deploy Failure"
+          SLACK_COLOR: "#C70039"
+          SLACK_CHANNEL: "#deploy-notifications"
+          SLACK_WEBHOOK: "${{ secrets.SLACK_WEBHOOK_URL }}"
