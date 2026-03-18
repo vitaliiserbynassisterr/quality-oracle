@@ -30,11 +30,25 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+async def _ensure_default_api_key():
+    """Create a default API key on first startup if none exist."""
+    from src.storage.mongodb import api_keys_col
+    from src.auth.api_keys import create_api_key
+
+    count = await api_keys_col().count_documents({})
+    if count == 0:
+        result = await create_api_key("admin@laureum.ai", "marketplace")
+        logger.info(f"Created default API key: {result['api_key']}")
+    else:
+        logger.info(f"API keys collection has {count} key(s), skipping seed.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting AgentTrust...")
     await connect_db()
     await connect_redis()
+    await _ensure_default_api_key()
     logger.info(f"AgentTrust running on port {settings.port}")
     yield
     logger.info("Shutting down AgentTrust...")
@@ -49,9 +63,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Merge env-configured origins with hardcoded production domains
+_PRODUCTION_ORIGINS = [
+    "https://laureum.ai",
+    "https://www.laureum.ai",
+]
+_cors_origins = list(set(settings.cors_origins + _PRODUCTION_ORIGINS))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
